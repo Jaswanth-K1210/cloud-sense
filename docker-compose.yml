@@ -1,0 +1,34 @@
+# docker compose up                      -> API :8000 + dashboard :4173
+# docker compose --profile slack up      -> also the Slack Socket Mode worker (needs SLACK_* in .env)
+# APP_ENV=offline docker compose up      -> no AWS/Hindsight/Groq needed (scans the eval accounts)
+services:
+  backend:
+    build: { context: ., dockerfile: backend/Dockerfile }
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: sqlite:////data/cloudsense.db
+      APP_ENV: ${APP_ENV:-dev}
+    volumes: [data:/data, "${HOME}/.aws:/root/.aws:ro"]
+    ports: ["8000:8000"]
+
+  slack:
+    profiles: [slack]
+    build: { context: ., dockerfile: backend/Dockerfile }
+    command: ["python", "-m", "backend.review.slack_app"]
+    env_file: [{ path: .env, required: false }]
+    environment:
+      DATABASE_URL: sqlite:////data/cloudsense.db
+      APP_ENV: ${APP_ENV:-dev}
+    volumes: [data:/data]
+    depends_on: [backend]
+
+  frontend:
+    build:
+      context: frontend
+      args:
+        VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports: ["4173:4173"]
+    depends_on: [backend]
+
+volumes:
+  data:

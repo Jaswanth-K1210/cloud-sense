@@ -6,3 +6,5 @@ cloudsense/
 .venv/
 .env
 *.db
+*.db
+offline-demo.db
