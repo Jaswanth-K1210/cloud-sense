@@ -18,6 +18,7 @@ from backend.store.models import Account, CandidateRow, CandidateStatus, Org, Re
 log = logging.getLogger(__name__)
 STATUS_FOR = {"recommend": CandidateStatus.pending, "suppress": CandidateStatus.suppressed,
               "ask": CandidateStatus.asked}
+MEMORIES_SHOWN = 3
 
 
 async def run_scan(svc: Services, scan_id: str, account_ids: list[str] | None = None) -> None:
@@ -52,8 +53,9 @@ async def run_scan(svc: Services, scan_id: str, account_ids: list[str] | None = 
             except Exception as e:
                 errors.append({"memory": f"Hindsight unavailable, deciding without memory: {e}"})
                 no_memory = True
+            recalled: dict[str, list] = {}
             decisions: dict[str, AgentDecision] = await decide_all(
-                org, candidates, resources, svc.memory, svc.llm, no_memory=no_memory)
+                org, candidates, resources, svc.memory, svc.llm, no_memory=no_memory, recalled_out=recalled)
 
             row_of: dict[str, ResourceRow] = {}
             for r in resources:
@@ -70,7 +72,9 @@ async def run_scan(svc: Services, scan_id: str, account_ids: list[str] | None = 
                 d = decisions[c.id]
                 row = CandidateRow(id=c.id, scan_id=scan.id, resource_id=row_of[c.resource_id].id, rule_id=c.rule_id,
                                    action=c.action, monthly_saving=c.monthly_saving, signals_text=c.signals_text,
-                                   blast_radius=c.blast_radius.model_dump(), agent_decision_json=d.model_dump(),
+                                   blast_radius=c.blast_radius.model_dump(),
+                                   agent_decision_json={**d.model_dump(), "memories": [
+                                       m.model_dump() for m in recalled.get(c.id, [])[:MEMORIES_SHOWN]]},
                                    extra_json={"reversible": c.reversible, "warnings": c.warnings},
                                    status=STATUS_FOR[d.decision])
                 s.add(row)

@@ -52,8 +52,9 @@ async def decide_one(llm: LLM, system: str, res: Resource, cand: Candidate, memo
 
 
 async def decide_all(org: Any, candidates: list[Candidate], resources: list[Resource],
-                     memory_client: MemoryClientProtocol | None, llm: LLM, *,
-                     no_memory: bool = False) -> dict[str, AgentDecision]:
+                     memory_client: MemoryClientProtocol | None, llm: LLM, *, no_memory: bool = False,
+                     recalled_out: dict[str, list[MemoryHit]] | None = None) -> dict[str, AgentDecision]:
+    """recalled_out, if given, receives candidate id -> memories consulted (for UI / Slack)."""
     by_id = {r.id: r for r in resources}
     out: dict[str, AgentDecision] = {}
     todo: list[tuple[Candidate, Resource]] = []
@@ -77,6 +78,8 @@ async def decide_all(org: Any, candidates: list[Candidate], resources: list[Reso
     sem = asyncio.Semaphore(LLM_CONCURRENCY)
 
     async def run(c: Candidate, r: Resource, mems: list[MemoryHit]) -> None:
+        if recalled_out is not None:
+            recalled_out[c.id] = mems
         async with sem:
             out[c.id] = await decide_one(llm, system, r, c, mems)
 
