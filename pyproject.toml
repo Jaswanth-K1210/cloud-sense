@@ -38,6 +38,7 @@ include = ["backend*", "eval*"]
 
 [tool.pytest.ini_options]
 testpaths = ["backend/tests", "eval/tests"]
+asyncio_mode = "auto"
 
 [tool.ruff]
 target-version = "py311"

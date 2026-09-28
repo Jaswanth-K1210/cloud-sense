@@ -54,6 +54,7 @@ class Org(Base):
     id: Mapped[str] = mapped_column(String(64), primary_key=True, default=new_id)
     name: Mapped[str] = mapped_column(String(200))
     hindsight_bank: Mapped[str] = mapped_column(String(200))
+    hard_rules: Mapped[list[Any]] = mapped_column(default=list)  # -> Hindsight directives
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
