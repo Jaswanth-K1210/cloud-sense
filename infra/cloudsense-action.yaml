@@ -1,0 +1,79 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudSense action role (opt-in, separate from the read-only role). Lets CloudSense carry out
+  engineer-approved, reversible actions: snapshot, stop/start, gp2->gp3, and delete only volumes
+  tagged cloudsense:approved=true.
+
+Parameters:
+  CloudSensePrincipalArn:
+    Type: String
+    Description: ARN of the AWS principal CloudSense runs as.
+  ExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Your organization's ExternalId.
+
+Resources:
+  CloudSenseActionRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudSenseActionRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudSensePrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: CloudSenseActions
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: ReversibleActions
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - ec2:StopInstances
+                  - ec2:StartInstances
+                  - ec2:CreateSnapshot
+                  - ec2:CreateTags
+                  - ec2:ModifyVolume
+                  - rds:StopDBInstance
+                  - rds:StartDBInstance
+                  - rds:CreateDBSnapshot
+                  - rds:AddTagsToResource
+              - Sid: DeleteOnlyApprovedVolumes
+                Effect: Allow
+                Resource: "*"
+                Action: ec2:DeleteVolume
+                Condition:
+                  StringEquals:
+                    aws:ResourceTag/cloudsense:approved: "true"
+              - Sid: RightsizeAndUndo
+                # Rightsize (change instance type) and undo (restore a deleted volume from its snapshot).
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - ec2:ModifyInstanceAttribute
+                  - ec2:CreateVolume
+              - Sid: WaitersAndGuards
+                # Read calls the executor needs to wait for snapshots/stops and check the gp3 cooldown.
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeVolumesModifications
+                  - rds:DescribeDBInstances
+
+Outputs:
+  RoleArn:
+    Description: Set as the account's action role in CloudSense.
+    Value: !GetAtt CloudSenseActionRole.Arn

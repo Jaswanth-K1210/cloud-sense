@@ -1,0 +1,74 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: >-
+  CloudSense read-only role. CloudSense assumes it with your ExternalId to describe resources
+  and read CloudWatch metrics. It cannot change anything.
+
+Parameters:
+  CloudSensePrincipalArn:
+    Type: String
+    Description: ARN of the AWS principal CloudSense runs as (shown in CloudSense Settings).
+  ExternalId:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    Description: Your organization's ExternalId (shown in CloudSense Settings).
+
+Resources:
+  CloudSenseReadOnlyRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: CloudSenseReadOnlyRole
+      MaxSessionDuration: 3600
+      AssumeRolePolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              AWS: !Ref CloudSensePrincipalArn
+            Action: sts:AssumeRole
+            Condition:
+              StringEquals:
+                sts:ExternalId: !Ref ExternalId
+      Policies:
+        - PolicyName: CloudSenseReadOnly
+          PolicyDocument:
+            Version: "2012-10-17"
+            Statement:
+              - Sid: Describe
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - ec2:DescribeInstances
+                  - ec2:DescribeVolumes
+                  - ec2:DescribeSnapshots
+                  - ec2:DescribeImages
+                  - ec2:DescribeAddresses
+                  - ec2:DescribeSecurityGroups
+                  - ec2:DescribeNetworkInterfaces
+                  - ec2:DescribeTags
+                  - autoscaling:DescribeAutoScalingGroups
+                  - elasticloadbalancing:DescribeLoadBalancers
+                  - elasticloadbalancing:DescribeTargetGroups
+                  - elasticloadbalancing:DescribeTargetHealth
+                  - rds:DescribeDBInstances
+                  - rds:DescribeDBClusters
+                  - rds:ListTagsForResource
+                  - s3:ListAllMyBuckets
+                  - s3:GetBucketLocation
+                  - s3:GetBucketTagging
+                  - s3:GetLifecycleConfiguration
+                  - cloudwatch:GetMetricData
+                  - cloudwatch:ListMetrics
+                  - tag:GetResources
+              - Sid: OptionalCostData
+                Effect: Allow
+                Resource: "*"
+                Action:
+                  - ce:GetCostAndUsage
+                  - cost-optimization-hub:ListRecommendations
+                  - compute-optimizer:GetEC2InstanceRecommendations
+
+Outputs:
+  RoleArn:
+    Description: Paste this into CloudSense Settings.
+    Value: !GetAtt CloudSenseReadOnlyRole.Arn
