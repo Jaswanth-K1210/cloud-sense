@@ -55,6 +55,7 @@ class Org(Base):
     name: Mapped[str] = mapped_column(String(200))
     hindsight_bank: Mapped[str] = mapped_column(String(200))
     hard_rules: Mapped[list[Any]] = mapped_column(default=list)  # -> Hindsight directives
+    external_id: Mapped[str] = mapped_column(String(100), default=new_id)  # sts:ExternalId for onboarding
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -111,6 +112,7 @@ class CandidateRow(Base):
     signals_text: Mapped[str] = mapped_column(Text, default="")
     blast_radius: Mapped[dict[str, Any]] = mapped_column(default=dict)
     agent_decision_json: Mapped[dict[str, Any]] = mapped_column(default=dict)
+    extra_json: Mapped[dict[str, Any]] = mapped_column(default=dict)  # reversible, warnings
     status: Mapped[CandidateStatus] = mapped_column(Enum(CandidateStatus), default=CandidateStatus.pending)
 
 
@@ -125,6 +127,8 @@ class Verdict(Base):
     until_date: Mapped[datetime | None] = mapped_column(default=None)
     at: Mapped[datetime] = mapped_column(default=utcnow)
     retained_op_id: Mapped[str | None] = mapped_column(String(200), default=None)
+    learning_status: Mapped[str] = mapped_column(String(20), default="learning")  # learning|learned|timeout|error
+    learned_rule_json: Mapped[dict[str, Any]] = mapped_column(default=dict)  # {text, proof_count}
 
 
 class ActionRow(Base):
