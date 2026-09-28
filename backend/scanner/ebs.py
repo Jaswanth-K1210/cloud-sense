@@ -20,7 +20,8 @@ def describe(session: boto3.Session, region: str, account_alias: str, account_id
                 name=tags.get("Name", vid), tags=tags, owner_team=owner_team(tags), service=service_of(tags),
                 state=v["State"], volume_type=v.get("VolumeType"), size_gb=v.get("Size"),
                 created_at=v.get("CreateTime"),
-                attrs={"attached_to": attached[0] if attached else None},
+                attrs={"attached_to": attached[0] if attached else None,
+                       "availability_zone": v.get("AvailabilityZone")},
             ))
     return out + describe_snapshots(session, region, account_alias, account_id)
 
