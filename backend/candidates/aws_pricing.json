@@ -1,6 +1,6 @@
 {
   "ec2": {
-    "t3.nano": 3.80,
+    "t3.nano": 3.8,
     "t3.micro": 7.59,
     "t3.small": 15.18,
     "t3.medium": 30.37,
@@ -14,15 +14,15 @@
     "r5.xlarge": 183.96,
     "r5.2xlarge": 367.92,
     "c5.large": 62.05,
-    "c5.xlarge": 124.10,
-    "c5.2xlarge": 248.20
+    "c5.xlarge": 124.1,
+    "c5.2xlarge": 248.2
   },
   "rds": {
     "db.t3.micro": 12.41,
     "db.t3.small": 24.82,
     "db.t3.medium": 49.64,
-    "db.r5.large": 175.20,
-    "db.r5.xlarge": 350.40,
+    "db.r5.large": 175.2,
+    "db.r5.xlarge": 350.4,
     "db.m5.large": 125.56,
     "db.m5.xlarge": 251.12
   },
@@ -30,7 +30,8 @@
     "standard_per_gb": 0.023,
     "infrequent_access_per_gb": 0.0125,
     "glacier_instant_per_gb": 0.004,
-    "glacier_deep_per_gb": 0.00099
+    "glacier_deep_per_gb": 0.00099,
+    "intelligent_tiering_ia_per_gb": 0.0125
   },
   "load_balancer": {
     "alb_base": 22.27,
@@ -42,20 +43,21 @@
   },
   "elasticsearch": {
     "m5.large": 120.45,
-    "m5.xlarge": 240.90,
+    "m5.xlarge": 240.9,
     "t3.small": 26.28,
     "t3.medium": 52.56
   },
   "kubernetes": {
-    "cluster_base": 73.00,
+    "cluster_base": 73.0,
     "per_node_m5_large": 70.08,
     "per_node_t3_medium": 30.37
   },
   "ebs": {
     "gp3_per_gb": 0.08,
-    "gp2_per_gb": 0.10,
+    "gp2_per_gb": 0.1,
     "io1_per_gb": 0.125,
-    "st1_per_gb": 0.045
+    "st1_per_gb": 0.045,
+    "snapshot_per_gb": 0.05
   },
   "data_transfer": {
     "per_gb_out": 0.09,
@@ -66,7 +68,7 @@
     "unused_monthly": 3.65
   },
   "cloudwatch": {
-    "per_gb_ingested": 0.50,
+    "per_gb_ingested": 0.5,
     "per_gb_stored": 0.03
   }
 }
