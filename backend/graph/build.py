@@ -12,7 +12,7 @@ from backend.graph.blast_radius import blast_radius
 from backend.scanner.models import Resource
 
 NAME_TOKENS = ("standby", "replica", "dr", "backup", "batch", "payroll", "archive", "audit", "bastion", "runner",
-               "nat", "blue", "green")
+               "nat", "blue", "green", "license", "debug", "oncall")
 FLAT_ZERO_CPU = 1.0  # % max CPU
 SPIKE_FACTOR = 3.0  # a spike day is >= 3x the median day
 MAX_SPIKE_DAYS = 4  # "a few" high days
