@@ -3,27 +3,50 @@ requires = ["setuptools>=45", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "openenv-cloudsense"
-version = "1.0.0"
-description = "CloudSense: OpenEnv RL benchmark for FinOps AI agents on cloud cost optimization"
-requires-python = ">=3.10"
+name = "cloudsense"
+version = "2.0.0"
+description = "CloudSense: an AWS cost agent that learns your org's unwritten rules from rejected recommendations"
+requires-python = ">=3.11"
 dependencies = [
-    "openenv-core>=0.2.0",
     "fastapi>=0.115.0",
     "uvicorn>=0.32.0",
     "pydantic>=2.9.2",
+    "pydantic-settings>=2.5.0",
+    "sqlalchemy>=2.0",
+    "boto3>=1.35",
+    "hindsight-client",
     "openai>=2.7.2",
+    "slack-bolt>=1.21",
+    "networkx>=3.3",
+    "httpx>=0.27",
+    "matplotlib>=3.9",
+    # eval harness (OpenEnv server + baseline inference)
+    "openenv-core>=0.2.0",
     "requests>=2.32.3",
 ]
 
 [project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
+    "pytest-asyncio>=0.24",
+    "moto[all]>=5.0",
+    "ruff>=0.6",
 ]
 
-[project.scripts]
-server = "server.app:main"
+[tool.setuptools.packages.find]
+include = ["backend*", "eval*"]
 
-[tool.setuptools]
-include-package-data = true
-packages = ["env", "env.tasks", "env.graders", "env.data", "server"]
+[tool.pytest.ini_options]
+testpaths = ["backend/tests", "eval/tests"]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+extend-exclude = [".venv", "frontend"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.per-file-ignores]
+# legacy RL env code, kept as-is for the eval harness
+"eval/**" = ["E501", "E741", "B", "UP042"]
