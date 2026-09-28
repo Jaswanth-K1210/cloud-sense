@@ -39,16 +39,16 @@ the playbook refreshes → the next scan is smarter.
 | Memory bank per org | Tenant isolation: bank `org-{id}` | [`types.py#L70`](backend/memory/types.py#L70) |
 | Mission, disposition | "Breaking production is worse than missing a saving"; skepticism 5, literalism 4 | [`setup.py#L7`](backend/memory/setup.py#L7), [`setup.py#L32`](backend/memory/setup.py#L32) |
 | Directives | The org's written hard rules (Settings page) become bank directives; also enforced as a pre-filter before the LLM | [`setup.py#L41`](backend/memory/setup.py#L41), [`decide.py#L22`](backend/agent/decide.py#L22) |
-| `retain` | Every verdict, approvals included, with context, timestamp, entities, tags and an idempotent `document_id` | [`types.py#L97`](backend/memory/types.py#L97), [`client.py#L49`](backend/memory/client.py#L49) |
-| `recall` | Before each decision, in parallel (8 at a time), queried by action, name, role hints, signals and neighbours | [`types.py#L118`](backend/memory/types.py#L118), [`client.py#L60`](backend/memory/client.py#L60) |
-| Observations | The Learned Rules page: consolidated rules with proof counts and source verdicts | [`client.py#L99`](backend/memory/client.py#L99) |
-| Mental model | `org-playbook`: untagged, refreshed after consolidation in delta mode, structured output for UI chips; injected into the agent's system prompt | [`setup.py#L23`](backend/memory/setup.py#L23), [`client.py#L76`](backend/memory/client.py#L76) |
-| Mental model history | Playbook page version diff | [`client.py#L85`](backend/memory/client.py#L85) |
-| `reflect` | "Why?" buttons in Slack and the dashboard, and the Ask page, with `based_on` sources | [`client.py#L93`](backend/memory/client.py#L93) |
+| `retain` | Every verdict, approvals included, with context, timestamp, entities, tags and an idempotent `document_id` | [`types.py#L97`](backend/memory/types.py#L97), [`client.py#L63`](backend/memory/client.py#L63) |
+| `recall` | Before each decision, in parallel (8 at a time), queried by action, name, role hints, signals and neighbours | [`types.py#L118`](backend/memory/types.py#L118), [`client.py#L74`](backend/memory/client.py#L74) |
+| Observations | The Learned Rules page: consolidated rules with proof counts and source verdicts | [`client.py#L114`](backend/memory/client.py#L114) |
+| Mental model | `org-playbook`: untagged, refreshed after consolidation in delta mode, structured output for UI chips; injected into the agent's system prompt | [`setup.py#L23`](backend/memory/setup.py#L23), [`client.py#L90`](backend/memory/client.py#L90) |
+| Mental model history | Playbook page version diff | [`client.py#L99`](backend/memory/client.py#L99) |
+| `reflect` | "Why?" buttons in Slack and the dashboard, and the Ask page, with `based_on` sources | [`client.py#L107`](backend/memory/client.py#L107) |
 | Tags + `observation_scopes` | `[[], [account:x], [team:y]]`: org-wide rules that transfer to new accounts, plus per-account and per-team rules | [`types.py#L97`](backend/memory/types.py#L97) |
-| Operations API | Wait for consolidation, then show "Rule learned (confirmed N×)" in Slack and the queue | [`client.py#L125`](backend/memory/client.py#L125), [`service.py#L79`](backend/review/service.py#L79) |
+| Operations API | Wait for consolidation, then show "Rule learned (confirmed N×)" in Slack and the queue | [`client.py#L140`](backend/memory/client.py#L140), [`service.py#L79`](backend/review/service.py#L79) |
 | Cold start | 10 common exceptions a new org can accept, retained as `org policy seed` | [`templates.py`](backend/memory/templates.py) |
-| Memory safety | Only reviewers/admins can teach; provenance on every rule; admins remove a poisoned rule by invalidating its source facts | [`service.py#L47`](backend/review/service.py#L47), [`client.py#L117`](backend/memory/client.py#L117) |
+| Memory safety | Only reviewers/admins can teach; provenance on every rule; admins remove a poisoned rule by invalidating its source facts | [`service.py#L47`](backend/review/service.py#L47), [`client.py#L132`](backend/memory/client.py#L132) |
 
 SDK signatures were verified against `hindsight-client` 0.10.1; where they differ from the original design, see
 [`docs/HINDSIGHT_NOTES.md`](docs/HINDSIGHT_NOTES.md).
