@@ -46,10 +46,25 @@ class Services:
         self._llm = value
 
 
+def _offline_scan(account: Any) -> list[Resource]:
+    """APP_ENV=offline: 'scan' the eval env's medium account instead of AWS."""
+    from eval.cloudsense_env.adapter import to_resources
+    from eval.cloudsense_env.tasks import TASKS
+
+    return to_resources(TASKS["mid-size-audit"]().load_account_raw(), account_alias=account.alias)
+
+
 def _default() -> Services:
+    from backend.config import settings
     from backend.scanner.scan import scan_account
     from backend.store.db import SessionLocal
 
+    if settings.APP_ENV == "offline":  # no AWS, Hindsight or Groq needed
+        from backend.agent.fake_llm import FakeLLM
+        from backend.memory.fake import InMemoryMemoryClient
+
+        return Services(session_factory=SessionLocal, _memory=InMemoryMemoryClient(), _llm=FakeLLM(),
+                        scan_account=_offline_scan)
     return Services(session_factory=SessionLocal, scan_account=scan_account)
 
 

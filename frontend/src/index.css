@@ -1,0 +1,46 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  /* harbor slate, light */
+  --ink: 24 33 43;        /* #18212B */
+  --muted: 92 106 121;    /* #5C6A79 */
+  --paper: 244 246 248;   /* #F4F6F8 */
+  --panel: 255 255 255;
+  --rule: 213 220 227;    /* #D5DCE3 */
+  --approve: 0 135 111;   /* #00876F, validated chart line */
+  --reject: 184 67 58;    /* #B8433A */
+  --learned: 164 110 8;   /* amber, AA on white */
+  --focus: 37 99 235;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --ink: 226 232 238;
+    --muted: 148 161 175;
+    --paper: 15 23 32;    /* #0F1720 */
+    --panel: 26 36 48;    /* #1A2430 */
+    --rule: 48 62 78;
+    --approve: 43 168 147; /* #2BA893, validated on dark */
+    --reject: 232 118 106;
+    --learned: 226 170 60;
+    --focus: 96 165 250;
+    color-scheme: dark;
+  }
+}
+
+body { @apply bg-paper text-ink font-sans antialiased; font-size: 15px; line-height: 1.5; }
+:focus-visible { outline: 2px solid rgb(var(--focus)); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) { * { transition: none !important; animation: none !important; } }
+
+/* An engineer's own words: the thing CloudSense learns from. */
+.voice { @apply font-voice italic text-ink; font-size: 1.08rem; line-height: 1.55; }
+.voice::before { content: "“"; }
+.voice::after { content: "”"; }
+
+.btn { @apply inline-flex items-center gap-1 rounded-md border border-rule bg-panel px-3 py-1.5 text-sm font-medium hover:border-muted disabled:opacity-50; }
+.btn-approve { @apply border-approve bg-approve text-white hover:opacity-90; }
+.btn-reject { @apply border-reject text-reject; }
+.field { @apply w-full rounded-md border border-rule bg-panel px-3 py-2 text-sm; }
