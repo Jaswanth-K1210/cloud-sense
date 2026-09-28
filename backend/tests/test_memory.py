@@ -137,3 +137,23 @@ async def test_real_client_wiring(monkeypatch) -> None:
     assert [c[1] for c in hs.calls if c[0] == "update_memory"] == [
         {"id": "f1", "state": "invalidated"}, {"id": "f2", "state": "invalidated"}]
     assert await mc.wait_for_consolidation(org, timeout_s=5) is True
+
+
+def test_real_client_uses_one_sdk_client_per_event_loop(monkeypatch) -> None:
+    import asyncio
+
+    made = []
+
+    class FakeHindsight:
+        def __init__(self, **kw) -> None:
+            made.append(self)
+
+    monkeypatch.setattr("backend.memory.client.Hindsight", FakeHindsight)
+    mc = MemoryClient()
+
+    async def grab():
+        return mc.hs, mc.hs
+
+    a1, a2 = asyncio.run(grab())
+    b1, _ = asyncio.run(grab())  # a new loop, like the Slack worker's asyncio.run per click
+    assert a1 is a2 and a1 is not b1 and len(made) == 2

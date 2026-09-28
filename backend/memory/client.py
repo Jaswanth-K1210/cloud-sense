@@ -5,6 +5,7 @@ Every method is async. Real signatures are documented in docs/HINDSIGHT_NOTES.md
 
 import asyncio
 import time
+import weakref
 from typing import Any
 
 from hindsight_client import Hindsight
@@ -41,7 +42,20 @@ def _hit(r: Any) -> MemoryHit:
 
 class MemoryClient:
     def __init__(self, hs: Hindsight | None = None) -> None:
-        self.hs = hs or Hindsight(base_url=settings.HINDSIGHT_BASE_URL, api_key=settings.HINDSIGHT_API_KEY)
+        self._fixed = hs  # injected (tests): used as-is
+        # The SDK's HTTP session is bound to the event loop that first used it; the Slack worker and
+        # background tasks run on other loops, so keep one SDK client per running loop.
+        self._per_loop: weakref.WeakKeyDictionary[asyncio.AbstractEventLoop, Hindsight] = (
+            weakref.WeakKeyDictionary())
+
+    @property
+    def hs(self) -> Hindsight:
+        if self._fixed is not None:
+            return self._fixed
+        loop = asyncio.get_running_loop()
+        if loop not in self._per_loop:
+            self._per_loop[loop] = Hindsight(base_url=settings.HINDSIGHT_BASE_URL, api_key=settings.HINDSIGHT_API_KEY)
+        return self._per_loop[loop]
 
     async def ensure_bank(self, org: Any) -> None:
         await setup.ensure_bank(self.hs, org)
@@ -91,10 +105,11 @@ class MemoryClient:
         return out
 
     async def reflect(self, org: Any, question: str) -> ReflectAnswer:
-        ans = await self.hs.areflect(bank_id=bank_id(org), query=question)
-        mems = ans.based_on.memories if ans.based_on and ans.based_on.memories else []
-        return ReflectAnswer(text=ans.text, based_on=[MemoryHit(id=m.id or "", text=m.text, type=m.type)
-                                                      for m in mems])
+        ans = await self.hs.areflect(bank_id=bank_id(org), query=question, include_facts=True)
+        b = ans.based_on
+        hits = [MemoryHit(id=m.id or "", text=m.text, type=m.type) for m in (b.memories or [] if b else [])]
+        hits += [MemoryHit(id=m.id, text=m.text, type="mental_model") for m in (b.mental_models or [] if b else [])]
+        return ReflectAnswer(text=ans.text, based_on=hits)
 
     async def list_rules(self, org: Any) -> list[Rule]:
         bid = bank_id(org)

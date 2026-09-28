@@ -15,7 +15,13 @@
     "r5.2xlarge": 367.92,
     "c5.large": 62.05,
     "c5.xlarge": 124.1,
-    "c5.2xlarge": 248.2
+    "c5.2xlarge": 248.2,
+    "t4g.nano": 3.07,
+    "t4g.micro": 6.13,
+    "t4g.small": 12.26,
+    "t4g.medium": 24.53,
+    "t4g.large": 49.06,
+    "t4g.xlarge": 98.11
   },
   "rds": {
     "db.t3.micro": 12.41,

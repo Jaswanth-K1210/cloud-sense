@@ -1,7 +1,7 @@
 PY ?= .venv/bin/python
 REGION ?= us-east-1
 
-.PHONY: install test lint run demo seed teardown lookalike eval eval-fake plot smoke-memory frontend
+.PHONY: sim sim-live install test lint run demo seed teardown lookalike eval eval-fake plot smoke-memory frontend
 
 install:            ## Python 3.11 venv + dev deps + frontend deps
 	uv venv --python 3.11 .venv
@@ -44,3 +44,9 @@ eval-fake:          ## offline harness check, seconds
 
 smoke-memory:       ## real Hindsight: retain -> consolidate -> recall, prints latency
 	$(PY) -m backend.memory.smoke
+
+sim:                ## end-to-end demo story: moto AWS + fake memory/LLM (free)
+	$(PY) tests.py
+
+sim-live:           ## same story with REAL Hindsight + Groq from .env (AWS still simulated)
+	$(PY) tests.py --live

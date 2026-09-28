@@ -80,6 +80,8 @@ make frontend      # dashboard on :5173, pick a user in the header, then "Run a 
 7. Measure Hindsight consolidation latency before relying on it live: `make smoke-memory`.
 
 `make test` runs the Python suite (moto for AWS, in-memory fakes for Hindsight, Groq and Slack) and the frontend build.
+`make sim` plays the whole demo story end to end through the API; `make sim-live` does the same against your real
+Hindsight and Groq keys (AWS stays simulated by moto, so it costs nothing).
 
 ## Eval: does memory actually help?
 
