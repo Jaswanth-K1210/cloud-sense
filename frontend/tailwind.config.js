@@ -18,6 +18,8 @@ export default {
                 active: "#5eead4", memory: "#c4b5fd" },
       },
       fontFamily: { sans: ['"Inter"', "ui-sans-serif", "system-ui", "sans-serif"] },
+      keyframes: { rise: { from: { opacity: "0", transform: "translateY(10px)" }, to: { opacity: "1", transform: "none" } } },
+      animation: { rise: "rise 0.6s ease-out both" }, // the one orchestrated moment: the About hero demo
     },
   },
 };

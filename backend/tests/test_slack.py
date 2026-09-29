@@ -150,3 +150,18 @@ def test_notifier_posts_each_candidate(svc: Services) -> None:
     sa.make_notifier(client, svc)(None, "scan1", rows)
     (post,) = client.named("chat_postMessage")
     assert post["blocks"][-1]["elements"][0]["value"] == "c1"
+
+
+def test_send_test_message_explains_slack_errors(monkeypatch) -> None:
+    from slack_sdk.errors import SlackApiError
+
+    class Boom:
+        def __init__(self, token=None) -> None:
+            pass
+
+        def chat_postMessage(self, **kw):
+            raise SlackApiError("no", {"ok": False, "error": "not_in_channel"})
+
+    monkeypatch.setattr("slack_sdk.WebClient", Boom)
+    ok, msg = sa.send_test_message("#x")
+    assert not ok and "/invite" in msg

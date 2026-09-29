@@ -92,6 +92,10 @@ async def learn(svc: Services, verdict_id: str, timeout_s: float = 90) -> None:
                 best = max(rules, key=lambda r: len(want & tokens(r.text)), default=None)
                 if best and want & tokens(best.text):
                     v.learned_rule_json = {"id": best.id, "text": best.text, "proof_count": best.proof_count}
+                    teacher = s.get(User, v.reviewer_id)
+                    repo.log_audit(s, org.id, "cloudsense", "rule_learned", {
+                        "text": best.text, "proof_count": best.proof_count,
+                        "from": teacher.name if teacher else None, "reason": v.reason})
         except Exception as e:
             log.warning("learning status failed for %s: %s", verdict_id, e)
             v.learning_status = "error"

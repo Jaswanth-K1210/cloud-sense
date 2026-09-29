@@ -1,6 +1,7 @@
 """CloudSense backend FastAPI entry point."""
 
 import asyncio
+import logging
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
@@ -24,6 +25,13 @@ async def lifespan(_: FastAPI):
         from backend.review.slack_app import make_notifier
 
         services.notify_review = make_notifier(WebClient(token=settings.SLACK_BOT_TOKEN))
+    if settings.SLACK_BOT_TOKEN and settings.SLACK_APP_TOKEN and "slack_socket" not in services.extra:
+        from backend.review.slack_app import start_socket_mode
+
+        try:  # buttons in Slack reach this process; no separate worker needed
+            services.extra["slack_socket"] = start_socket_mode()
+        except Exception:
+            logging.getLogger(__name__).exception("Slack Socket Mode failed to start")
     task = asyncio.create_task(scheduler.loop(services))
     yield
     task.cancel()

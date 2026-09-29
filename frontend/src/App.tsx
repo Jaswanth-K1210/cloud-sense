@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { api, getToken, post, setOrg, setToken, type Me } from "./api";
 import { Shell } from "./components/Shell";
+import About from "./pages/About";
 import Activity from "./pages/Activity";
 import Ask from "./pages/Ask";
 import Auth from "./pages/Auth";
@@ -51,6 +52,7 @@ export default function App() {
   if (booting) return <p className="p-10 text-muted" role="status">Loading…</p>;
 
   if (!me) {
+    if (r.page !== "login" && r.page !== "signup") return <About />;
     return <Auth mode={r.page === "login" ? "login" : "signup"}
       onAuthed={(m) => { setToken(m.token); adopt(m); window.location.hash = m.org.settings.onboarded ? "overview" : "onboarding"; }} />;
   }

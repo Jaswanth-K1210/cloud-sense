@@ -93,7 +93,10 @@ def cand_json(c: CandidateRow, r: ResourceRow) -> dict[str, Any]:
             "resource": {"id": r.aws_id, "name": r.name, "type": r.type, "tags": r.tags_json,
                          "account": r.data_json.get("account_alias"),
                          "owner_team": r.owner_team, "role_hints": r.role_hints_json,
-                         "iac_managed": r.data_json.get("iac_managed", False), "region": r.data_json.get("region")}}
+                         "iac_managed": r.data_json.get("iac_managed", False), "region": r.data_json.get("region"),
+                         "instance_type": r.data_json.get("instance_type") or r.data_json.get("volume_type"),
+                         "size_gb": r.data_json.get("size_gb"), "created_at": r.data_json.get("created_at"),
+                         "metrics": r.data_json.get("metrics") or {}, "state": r.data_json.get("state")}}
 
 
 def verdict_json(v: Verdict) -> dict[str, Any]:
@@ -402,7 +405,7 @@ def slack_status(user: CurrentUser) -> dict[str, Any]:
 
         r = WebClient(token=settings.SLACK_BOT_TOKEN).auth_test()
         return {"connected": True, "team": r.get("team"), "url": r.get("url"), "bot": r.get("user"),
-                "socket_mode": bool(settings.SLACK_APP_TOKEN)}
+                "socket_mode": bool(settings.SLACK_APP_TOKEN), "listening": "slack_socket" in services.extra}
     except Exception as e:
         return {"connected": False, "reason": f"Slack rejected the token: {e}"}
 
@@ -454,6 +457,7 @@ def start_scan(org_id: str, s: DB, user: CurrentUser, bg: BackgroundTasks, body:
     org = org_for(s, org_id, user)
     need(user, Role.reviewer, Role.admin)
     scan = repo.create_scan(s, org.id)
+    repo.log_audit(s, org.id, user.id, "scan_started", {"scan_id": scan.id, "trigger": "manual"})
     s.commit()
     bg.add_task(run_scan, services, scan.id, body.account_ids if body else None)
     return {"scan_id": scan.id, "status": scan.status}
@@ -515,6 +519,70 @@ def get_verdict(verdict_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
     return verdict_json(v)
 
 
+STEP_TEXT = {
+    "CreateSnapshot": lambda p: f"Create snapshot of {p.get('VolumeId')}",
+    "StopInstances": lambda p: f"Stop instance {', '.join(p.get('InstanceIds', []))}",
+    "StartInstances": lambda p: f"Start instance {', '.join(p.get('InstanceIds', []))}",
+    "CreateTags": lambda p: "Tag " + ", ".join(f"{t['Key']}={t['Value']}" for t in p.get("Tags", [])),
+    "ModifyInstanceAttribute": lambda p: f"Change instance type to {p.get('InstanceType', {}).get('Value')}",
+    "ModifyVolume": lambda p: f"Change volume {p.get('VolumeId')} to {p.get('VolumeType')}",
+    "DeleteVolume": lambda p: f"Delete volume {p.get('VolumeId')}",
+    "CreateDBSnapshot": lambda p: f"Create database snapshot {p.get('DBSnapshotIdentifier')}",
+    "StopDBInstance": lambda p: f"Stop database {p.get('DBInstanceIdentifier')}",
+    "AddTagsToResource": lambda p: "Tag " + ", ".join(f"{t['Key']}={t['Value']}" for t in p.get("Tags", [])),
+}
+UNDO_TEXT = {"stop_ec2": "Start the instance (snapshots are kept)",
+             "rightsize_ec2": "Change back to the old instance type",
+             "delete_ebs": "Restore the volume from its snapshot", "stop_rds": "Start the database",
+             "modify_gp3": "Not needed: gp3 matches gp2 performance"}
+
+
+def step_text(call: dict[str, Any]) -> str:
+    fn = STEP_TEXT.get(call["op"])
+    return fn(call["params"]) if fn else call["op"]
+
+
+@router.get("/candidates/{cand_id}")
+def candidate_detail(cand_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
+    """Everything the Execute screen needs: the candidate, the resource, and the exact plan."""
+    from backend.actions.executor import ExecutionError, action_json, plan
+    from backend.actions.iac import terraform_diff
+    from backend.scanner.models import Resource
+
+    cand = candidate_for(s, cand_id, user)
+    row = s.get(ResourceRow, cand.resource_id)
+    res = Resource.model_validate(row.data_json)
+    actor = user.name.split()[0].lower() if user.name else user.id
+    plan_json: dict[str, Any]
+    if res.iac_managed:
+        plan_json = {"kind": "iac_diff", "steps": [], "terraform_diff": terraform_diff(cand.action, res),
+                     "undo": "Revert the pull request"}
+    else:
+        try:
+            kind, calls = plan(cand, res, actor)
+            plan_json = {"kind": kind, "undo": UNDO_TEXT.get(kind, ""), "steps": [
+                {"service": c["service"], "op": c["op"], "text": step_text(c)} for c in calls]}
+        except ExecutionError as e:
+            plan_json = {"kind": None, "steps": [], "error": str(e)}
+    actions = s.scalars(select(ActionRow).where(ActionRow.candidate_id == cand.id).order_by(ActionRow.at.desc()))
+    return {"candidate": cand_json(cand, row), "resource": row.data_json, "plan": plan_json,
+            "actions": [action_json(a) for a in actions]}
+
+
+@router.post("/candidates/{cand_id}/override")
+def override_skip(cand_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
+    """Recommend a skipped candidate anyway."""
+    cand = candidate_for(s, cand_id, user)
+    need(user, Role.reviewer, Role.admin)
+    if cand.status != CandidateStatus.suppressed:
+        raise HTTPException(409, "Only skipped recommendations can be overridden.")
+    cand.status = CandidateStatus.pending
+    repo.log_audit(s, user.org_id, user.id, "override", {"candidate_id": cand.id,
+                                                          "resource": s.get(ResourceRow, cand.resource_id).name})
+    s.commit()
+    return cand_json(cand, s.get(ResourceRow, cand.resource_id))
+
+
 @router.post("/candidates/{cand_id}/why")
 async def why(cand_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
     cand = candidate_for(s, cand_id, user)
@@ -564,7 +632,37 @@ def undo_action(action_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
 @router.get("/orgs/{org_id}/rules")
 async def rules(org_id: str, s: DB, user: CurrentUser) -> list[dict[str, Any]]:
     org = org_for(s, org_id, user)
-    return [r.model_dump() for r in await services.memory.list_rules(org)]
+    learned = await services.memory.list_rules(org)
+    recent_scans = [x.id for x in s.scalars(select(Scan).where(Scan.org_id == org.id)
+                                            .order_by(Scan.started_at.desc()).limit(20))]
+    skipped = s.execute(select(CandidateRow, ResourceRow, Scan.started_at)
+                        .join(ResourceRow, CandidateRow.resource_id == ResourceRow.id)
+                        .join(Scan, CandidateRow.scan_id == Scan.id)
+                        .where(CandidateRow.scan_id.in_(recent_scans),
+                               CandidateRow.status == CandidateStatus.suppressed)).all()
+    seeds = [t[:40].lower() for t in TEMPLATES.values()]
+    out = []
+    for r in learned:
+        ids = {r.id, *(x.id for x in r.sources)}
+        hits = [(res.name, at) for c, res, at in skipped
+                if ids & set((c.agent_decision_json or {}).get("cited_memory_ids", []))]
+        starter = "seed" in r.tags or any(seed in (x.text or "").lower() or seed in r.text.lower()
+                                          for x in r.sources for seed in seeds)
+        out.append({**r.model_dump(), "starter": starter, "protected": sorted({n for n, _ in hits}),
+                    "last_used": max((at for _, at in hits), default=None)})
+    return out
+
+
+class ReportIn(BaseModel):
+    reason: str = ""
+
+
+@router.post("/orgs/{org_id}/rules/{memory_id}/report", status_code=204)
+def report_rule(org_id: str, memory_id: str, body: ReportIn, s: DB, user: CurrentUser) -> None:
+    """Flag a learned rule as wrong so an admin can review it (Activity shows the report)."""
+    org = org_for(s, org_id, user)
+    repo.log_audit(s, org.id, user.id, "rule_reported", {"memory_id": memory_id, "reason": body.reason})
+    s.commit()
 
 
 @router.delete("/orgs/{org_id}/rules/{memory_id}", status_code=204)
@@ -595,12 +693,28 @@ async def ask(org_id: str, body: AskIn, s: DB, user: CurrentUser) -> dict[str, A
     return ans.model_dump()
 
 
+@router.post("/orgs/{org_id}/slack/test")
+def slack_test(org_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
+    """Post a test message to the workspace's review channel."""
+    from backend.review.slack_app import send_test_message
+
+    org = org_for(s, org_id, user)
+    need(user, Role.admin)
+    if not settings.SLACK_BOT_TOKEN:
+        raise HTTPException(400, "SLACK_BOT_TOKEN is not set on the server.")
+    channel = ((org.settings_json or {}).get("slack") or {}).get("channel") or settings.SLACK_REVIEW_CHANNEL
+    ok, message = send_test_message(channel)
+    if not ok:
+        raise HTTPException(400, message)
+    return {"ok": True, "message": message}
+
+
 # ---------- activity ----------
 
 @router.get("/orgs/{org_id}/activity")
 def activity(org_id: str, s: DB, user: CurrentUser, limit: int = 200) -> list[dict[str, Any]]:
     org = org_for(s, org_id, user)
-    names = {u.id: u.name for u in s.scalars(select(User).where(User.org_id == org.id))}
+    names = {u.id: u.name for u in s.scalars(select(User).where(User.org_id == org.id))} | {"cloudsense": "CloudSense"}
     rows = s.scalars(select(AuditLog).where(AuditLog.org_id == org.id).order_by(AuditLog.at.desc()).limit(limit))
     return [{"id": a.id, "at": a.at, "actor": names.get(a.actor, a.actor), "event": a.event, "details": a.payload_json}
             for a in rows]

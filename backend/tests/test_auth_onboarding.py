@@ -156,3 +156,39 @@ async def test_scheduler_runs_due_orgs_only(client: TestClient, monkeypatch) -> 
                    json={"schedule": sched, "onboarded": True})
     assert await scheduler.run_due(services) == [daily["org"]["id"]]
     assert await scheduler.run_due(services) == []  # just scanned: not due again for a day
+
+
+def test_candidate_detail_override_rules_and_activity(client: TestClient, monkeypatch) -> None:
+    from backend.deps import _offline_scan
+
+    monkeypatch.setattr(services, "scan_account", _offline_scan)
+    me = signup(client)
+    org, h = me["org"]["id"], H(me["token"])
+    client.post(f"/orgs/{org}/accounts", headers=h, json={"alias": "eval", "role_arn": "local"})
+    sid = client.post(f"/orgs/{org}/scans", headers=h).json()["scan_id"]
+    scan = client.get(f"/orgs/{org}/scans/{sid}", headers=h).json()
+    cand = scan["recommended"][0]
+    assert "metrics" in cand["resource"] and "instance_type" in cand["resource"]
+
+    detail = client.get(f"/candidates/{cand['id']}", headers=h).json()
+    assert detail["candidate"]["id"] == cand["id"] and detail["plan"]["steps"]
+    assert all(step["text"] for step in detail["plan"]["steps"])
+
+    # reject -> learned rule; rescan -> look-alike skipped; rules show what they protected
+    client.post(f"/candidates/{cand['id']}/verdict", headers=h,
+                json={"decision": "reject", "reason": "Nightly batch worker, spikes at 2am", "scope": "similar"})
+    sid2 = client.post(f"/orgs/{org}/scans", headers=h).json()["scan_id"]
+    scan2 = client.get(f"/orgs/{org}/scans/{sid2}", headers=h).json()
+    skipped = scan2["suppressed"][0]
+    rules = client.get(f"/orgs/{org}/rules", headers=h).json()
+    assert any(skipped["resource"]["name"] in r["protected"] for r in rules)
+    report = client.post(f"/orgs/{org}/rules/{rules[0]['id']}/report", headers=h, json={"reason": "wrong"})
+    assert report.status_code == 204
+
+    over = client.post(f"/candidates/{skipped['id']}/override", headers=h)
+    assert over.status_code == 200 and over.json()["status"] == "pending"
+    assert client.post(f"/candidates/{skipped['id']}/override", headers=h).status_code == 409
+
+    events = [e["event"] for e in client.get(f"/orgs/{org}/activity", headers=h).json()]
+    for ev in ("scan_started", "scan_finished", "rule_learned", "override", "rule_reported"):
+        assert ev in events, ev

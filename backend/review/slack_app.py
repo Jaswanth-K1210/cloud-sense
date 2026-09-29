@@ -236,6 +236,40 @@ def register(app: Any, svc: Services = services) -> None:
     app.view(REJECT_CALLBACK)(lambda ack, body, client: handle_reject_submit(ack, body, client, svc))
 
 
+def start_socket_mode(svc: Services = services):
+    """Open the Socket Mode connection in background threads (used by the API process at startup)."""
+    from slack_bolt import App
+    from slack_bolt.adapter.socket_mode import SocketModeHandler
+
+    app = App(token=settings.SLACK_BOT_TOKEN)
+    register(app, svc)
+    handler = SocketModeHandler(app, settings.SLACK_APP_TOKEN)
+    handler.connect()  # non-blocking
+    return handler
+
+
+SLACK_FIXES = {
+    "channel_not_found": "Channel not found. Check the name, or invite the bot to the channel (/invite @your-bot).",
+    "not_in_channel": "The bot isn't in this channel. In Slack, type /invite @your-bot in the channel.",
+    "is_archived": "That channel is archived. Pick another one.",
+    "invalid_auth": "Slack rejected the bot token. Reinstall the app and update SLACK_BOT_TOKEN.",
+    "missing_scope": "The bot lacks a permission. Add chat:write and chat:write.public, then reinstall the app.",
+}
+
+
+def send_test_message(channel: str) -> tuple[bool, str]:
+    from slack_sdk import WebClient
+    from slack_sdk.errors import SlackApiError
+
+    try:
+        WebClient(token=settings.SLACK_BOT_TOKEN).chat_postMessage(
+            channel=channel, text=":white_check_mark: CloudSense is connected. New recommendations will appear here.")
+        return True, f"Test message sent to {channel}."
+    except SlackApiError as e:
+        code = e.response.get("error", "")
+        return False, SLACK_FIXES.get(code, f"Slack said: {code or e}")
+
+
 def main() -> None:
     from slack_bolt import App
     from slack_bolt.adapter.socket_mode import SocketModeHandler

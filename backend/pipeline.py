@@ -13,6 +13,7 @@ from backend.candidates.rules import generate_candidates
 from backend.deps import Services
 from backend.graph.build import annotate
 from backend.scanner.models import Resource
+from backend.store import repo
 from backend.store.models import Account, CandidateRow, CandidateStatus, Org, ResourceRow, Scan
 
 log = logging.getLogger(__name__)
@@ -112,6 +113,11 @@ async def run_scan(svc: Services, scan_id: str, account_ids: list[str] | None = 
             cand_rows = []
         scan.errors = errors
         scan.finished_at = datetime.now(UTC)
+        repo.log_audit(s, org.id, "cloudsense", "scan_finished" if scan.status == "done" else "scan_failed", {
+            "scan_id": scan.id, "resources": scan.resource_count,
+            "recommendations": sum(c.status != CandidateStatus.suppressed for c in cand_rows),
+            "skipped": sum(c.status == CandidateStatus.suppressed for c in cand_rows),
+            "accounts": [a.alias for a in accounts], "errors": len(errors)})
         s.commit()
 
         to_review = [c for c in cand_rows if c.status in (CandidateStatus.pending, CandidateStatus.asked)]
