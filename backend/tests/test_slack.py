@@ -73,9 +73,10 @@ def test_candidate_blocks() -> None:
         {"id": "i-1", "name": "orders-db-standby", "type": "ec2"},
         {"decision": "recommend", "reason": "looks idle"},
         [{"id": "m1", "text": "line\nVerdict: REJECT. Reason: DR standby\nScope"}])
-    text = json.dumps(blocks)
-    assert "orders-db-standby" in text and "$7.59/month" in text and "2 resource(s)" in text
-    assert "Memories consulted" in text and "DR standby" in text
+    text = json.dumps(blocks, ensure_ascii=False)
+    assert "Stop orders-db-standby: save $8/mo" in text and "Why flagged:* idle" in text
+    assert "Blast radius:* 2 dependents" in text
+    assert "Memory checked: Verdict: REJECT. Reason: DR standby" in text
     assert [e["action_id"] for e in blocks[-1]["elements"]] == ["approve", "reject", "snooze", "why"]
     assert all(e["value"] == "c1" for e in blocks[-1]["elements"])
 
@@ -92,7 +93,9 @@ def test_approve(svc: Services) -> None:
     sa.handle_approve(ack, action_body("approve"), client, svc)
     assert ack.calls == [{}]
     assert status(svc) == CandidateStatus.approved
-    assert "Approved by <@U00REVIEW>" in client.named("chat_postMessage")[0]["text"]
+    (upd,) = client.named("chat_update")
+    assert upd["ts"] == "100.1" and "Approved by <@U00REVIEW> · queued for execution" in upd["text"]
+    assert upd["blocks"][-1]["type"] == "context"  # buttons replaced by the status line
 
 
 def test_unknown_or_viewer_is_rejected(svc: Services) -> None:
@@ -117,8 +120,10 @@ def test_reject_opens_modal_then_submit_learns(svc: Services) -> None:
     assert ack.calls == [{}]
     assert status(svc) == CandidateStatus.rejected
     assert client.named("chat_postMessage")[0]["text"] == "Got it. I'll remember this. Learning…"
-    update = client.named("chat_update")[0]
-    assert update["text"].startswith("Rule learned: *DR standby for orders-db, idle on purpose* (confirmed 1×)")
+    original, learned = client.named("chat_update")
+    assert original["ts"] == "100.1" and "Rejected by <@U00REVIEW>: “DR standby for orders-db" in original["text"]
+    assert learned["text"].startswith("Rule learned: *DR standby for orders-db, idle on purpose* (confirmed 1×)")
+    assert "Rule learned" in json.dumps(learned["blocks"])
     with svc.session_factory() as s:
         (v,) = s.query(Verdict).all()
         assert v.scope.value == "similar"
@@ -148,7 +153,8 @@ def test_notifier_posts_each_candidate(svc: Services) -> None:
     with svc.session_factory() as s:
         rows = [s.get(CandidateRow, "c1")]
     sa.make_notifier(client, svc)(None, "scan1", rows)
-    (post,) = client.named("chat_postMessage")
+    summary, post = client.named("chat_postMessage")
+    assert "1 new recommendation" in json.dumps(summary["blocks"])
     assert post["blocks"][-1]["elements"][0]["value"] == "c1"
 
 

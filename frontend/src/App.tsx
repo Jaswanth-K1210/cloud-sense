@@ -5,6 +5,7 @@ import About from "./pages/About";
 import Activity from "./pages/Activity";
 import Ask from "./pages/Ask";
 import Auth from "./pages/Auth";
+import Execute from "./pages/Execute";
 import FirstResults from "./pages/FirstResults";
 import Graph from "./pages/Graph";
 import Onboarding from "./pages/Onboarding";
@@ -69,9 +70,11 @@ export default function App() {
     playbook: () => <Playbook />, ask: () => <Ask />, activity: () => <Activity />,
     settings: () => <Settings tab={r.arg} />, profile: () => <Profile onMe={adopt} onLogout={logout} />,
     scan: () => <ScanProgress scanId={r.arg ?? ""} />, results: () => <FirstResults scanId={r.arg ?? ""} />,
+    execute: () => <Execute candidateId={r.arg ?? ""} />,
   };
   const page = r.page in pages ? r.page : "overview";
-  const navKey = page === "scan" || page === "results" ? "overview" : page === "profile" ? "" : page;
+  const navKey = page === "scan" || page === "results" ? "overview" : page === "execute" ? "recommendations"
+    : page === "profile" ? "" : page;
   return (
     <Shell page={navKey} me={me} onLogout={logout}>
       <div key={`${page}/${r.arg ?? ""}`} className="contents">{pages[page]()}</div>

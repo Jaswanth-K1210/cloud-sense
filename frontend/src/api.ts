@@ -72,7 +72,10 @@ export interface Candidate {
   signals_text: string; blast_radius: { count: number; names: string[] }; status: string;
   agent: AgentDecision; reversible?: boolean; warnings?: string[];
   resource: { id: string; name: string; type: string; tags: Record<string, string>; owner_team: string | null;
-    account?: string | null;
+    account?: string | null; instance_type?: string | null; size_gb?: number | null; created_at?: string | null;
+    state?: string | null; metrics?: { cpu_avg?: number | null; cpu_max?: number | null; cpu_p95?: number | null;
+      net_in_mb_per_day?: number | null; net_out_mb_per_day?: number | null; db_connections_max?: number | null;
+      daily_cpu_series?: number[] };
     role_hints: string[]; iac_managed: boolean; region: string };
 }
 export interface ScanDetail {

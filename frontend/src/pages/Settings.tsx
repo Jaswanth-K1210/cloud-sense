@@ -4,6 +4,7 @@ import { api, ORG, patch, post, put, type Metrics, type OrgInfo, type Rule, type
 import { Banner, Checkbox, Chip, Field, Input, Select, Setting, Toggle } from "../components/form";
 import { relTime, TopBar, useShell } from "../components/Shell";
 import { PageState, useLoad } from "../components/ui";
+import { SlackTest } from "../components/SlackTest";
 import { AWS_REGIONS, mask, ROLES, SERVICES, SPEND, STARTER, TEAM_SIZES } from "./Onboarding";
 
 const TABS = [["company", "Company"], ["accounts", "Accounts"], ["scanning", "Scanning"], ["slack", "Slack"],
@@ -221,16 +222,20 @@ function Scanning({ org }: { org: OrgInfo }) {
 }
 
 function Slack({ org }: { org: OrgInfo }) {
-  const [status, setStatus] = useState<{ connected: boolean; team?: string; reason?: string; socket_mode?: boolean } | null>(null);
+  const [status, setStatus] = useState<{ connected: boolean; team?: string; reason?: string; socket_mode?: boolean; listening?: boolean } | null>(null);
   const [channel, setChannel] = useState(org.settings.slack?.channel ?? "#cloudsense-review");
   const { busy, run, note } = useSaver();
   useEffect(() => { api<typeof status>("/slack/status").then(setStatus, () => undefined); }, []);
   return (
     <Card title="Slack" desc="Recommendations are posted to Slack for one-click reviews.">
       {status && (status.connected
-        ? <Banner kind="ok" title={`Connected to ${status.team}`}>{status.socket_mode ? "Buttons in Slack work (Socket Mode)." : "Set SLACK_APP_TOKEN so button clicks reach CloudSense."}</Banner>
+        ? <Banner kind={status.listening ? "ok" : "warn"} title={`Connected to ${status.team}`}>
+            {status.listening ? "Approve, Reject and Why? buttons in Slack are active." : status.socket_mode
+              ? "Buttons aren’t active yet: restart the backend so it opens the Slack connection." : "Set SLACK_APP_TOKEN so button clicks reach CloudSense."}
+          </Banner>
         : <Banner kind="warn" title="Slack isn’t connected">{status.reason} Reviews still work in the dashboard.</Banner>)}
-      <Field label="Review channel" hint="Invite the bot to this channel."><Input value={channel} onChange={(e) => setChannel(e.target.value)} /></Field>
+      <Field label="Review channel" hint="Invite the bot to this channel (/invite @your-bot)."><Input value={channel} onChange={(e) => setChannel(e.target.value)} /></Field>
+      {status?.connected && <SlackTest channel={channel} />}
       <div className="flex items-center gap-3">
         <button className="btn btn-approve" disabled={busy} onClick={() => run(() => put(`/orgs/${ORG}/settings`, { slack: { ...org.settings.slack, channel } }))}>Save</button>
         {note}

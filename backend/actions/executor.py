@@ -23,6 +23,14 @@ class ExecutionError(Exception):
     pass
 
 
+# Actions CloudSense never runs itself (irreversible, or policy changes a human should own).
+RECOMMEND_ONLY = {
+    "release": "Releasing an Elastic IP loses the address for good, so it is recommend-only.",
+    "delete_snapshot": "Deleting a snapshot can’t be undone, so it is recommend-only.",
+    "s3_lifecycle": "Adding an S3 lifecycle rule changes how data is stored long-term, so it is recommend-only.",
+}
+
+
 def call(service: str, op: str, region: str, wait: str | None = None, **params: Any) -> dict[str, Any]:
     return {"service": service, "op": op, "region": region, "params": params, **({"wait": wait} if wait else {})}
 
@@ -62,7 +70,8 @@ def plan(cand: CandidateRow, res: Resource, actor: str) -> tuple[str, list[dict[
             call("rds", "CreateDBSnapshot", r, DBSnapshotIdentifier=snap_id, DBInstanceIdentifier=res.id),
             call("rds", "StopDBInstance", r, DBInstanceIdentifier=res.id),
             call("rds", "AddTagsToResource", r, ResourceName=res.arn, Tags=_tags(cand, actor))]
-    raise ExecutionError(f"{cand.action} on {res.type} is recommend-only in v1 (irreversible or not automated)")
+    raise ExecutionError(RECOMMEND_ONLY.get(cand.action, f"{cand.action} on {res.type} is recommend-only") +
+                         " CloudSense recommends it; your team applies it.")
 
 
 def run_calls(session: Any, calls: list[dict[str, Any]]) -> list[dict[str, Any]]:

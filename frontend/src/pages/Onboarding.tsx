@@ -3,6 +3,7 @@ import { useEffect, useState, type ReactNode } from "react";
 import { api, ORG, patch, post, put, type Me, type OrgInfo, type User } from "../api";
 import { Icon } from "../components/Icon";
 import { Banner, Checkbox, Chip, Field, Input, Logo, Select, Setting, Toggle } from "../components/form";
+import { SlackTest } from "../components/SlackTest";
 
 const STEPS = ["Workspace", "Connect AWS", "Accounts & regions", "Slack", "Known rules", "Safety"];
 export const ROLES = ["Platform", "DevOps", "FinOps", "Engineering lead", "Other"];
@@ -392,7 +393,7 @@ function StepScope({ org, back, next }: { org: OrgInfo; back: () => void; next: 
 }
 
 // ---------- step 4 ----------
-interface SlackStatus { connected: boolean; team?: string; url?: string; reason?: string; socket_mode?: boolean }
+interface SlackStatus { connected: boolean; team?: string; url?: string; reason?: string; socket_mode?: boolean; listening?: boolean }
 
 function StepSlack({ org, back, next }: { org: OrgInfo; back: () => void; next: () => void }) {
   const [status, setStatus] = useState<SlackStatus | null>(null);
@@ -428,7 +429,9 @@ function StepSlack({ org, back, next }: { org: OrgInfo; back: () => void; next: 
           <div className="flex min-w-0 flex-1 flex-col gap-0.5">
             <p className="text-[15px] font-semibold text-ink">Slack workspace</p>
             <p className="text-[13px] text-muted">
-              {!status ? "Checking…" : status.connected ? `Connected to ${status.team}${status.socket_mode ? "" : " (set SLACK_APP_TOKEN to receive button clicks)"}` : `Not connected. ${status.reason}`}
+              {!status ? "Checking…" : status.connected
+                ? `Connected to ${status.team} · ${status.listening ? "buttons active" : status.socket_mode ? "restart the backend to activate buttons" : "set SLACK_APP_TOKEN to activate buttons"}`
+                : `Not connected. ${status.reason}`}
             </p>
           </div>
           {status && !status.connected && (
@@ -440,6 +443,7 @@ function StepSlack({ org, back, next }: { org: OrgInfo; back: () => void; next: 
         <Field label="Review channel" hint="New recommendations are posted here, batched per scan.">
           <Input value={channel} onChange={(e) => setChannel(e.target.value)} />
         </Field>
+        {status?.connected && <SlackTest channel={channel} />}
         <div className="flex flex-col gap-2">
           <span className="text-[13px] font-medium text-ink">Map reviewers</span>
           <div className="overflow-x-auto rounded-xl border border-rule">

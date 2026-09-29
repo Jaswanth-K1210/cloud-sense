@@ -19,6 +19,7 @@ class Settings(BaseSettings):
     CLOUDSENSE_PRINCIPAL_ARN: str = ""
     DEMO_LOOKBACK_HOURS: int | None = None
     DRY_RUN: bool = True
+    APP_URL: str = ""  # public dashboard URL, used for links in Slack messages (optional)
     # Tests/simulations only: accept an X-User-Id header instead of a login session.
     ALLOW_USER_HEADER: bool = False
 

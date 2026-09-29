@@ -772,8 +772,14 @@ def graph(scan_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
     for r in rows:
         c = cands.get(r.id)
         br = blast_radius(g, r.aws_id)
+        dj = r.data_json or {}
         nodes.append({"id": r.aws_id, "type": r.type, "name": r.name, "status": c.status.value if c else None,
                       "candidate_id": c.id if c else None, "action": c.action if c else None,
-                      "role_hints": r.role_hints_json, "blast_radius": {"count": len(br), "ids": br}})
+                      "saving": c.monthly_saving if c else None, "role_hints": r.role_hints_json,
+                      "blast_radius": {"count": len(br), "ids": br}, "tags": r.tags_json or {},
+                      "account": dj.get("account_alias"), "region": dj.get("region"), "state": dj.get("state"),
+                      "instance_type": dj.get("instance_type") or dj.get("volume_type"),
+                      "metrics": dj.get("metrics") or {}, "attrs": {k: v for k, v in (dj.get("attrs") or {}).items()
+                                                                     if k in ("replica_source", "db_role", "engine")}})
     edges = [{"source": r.aws_id, "target": dep} for r in rows for dep in r.depends_on_json if dep in g]
     return {"nodes": nodes, "edges": edges}

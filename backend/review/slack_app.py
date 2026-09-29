@@ -7,6 +7,7 @@ The API process posts new candidates through `make_notifier(WebClient)` (see bac
 import asyncio
 import json
 import logging
+import re
 from datetime import UTC, datetime
 from typing import Any
 
@@ -15,7 +16,18 @@ from sqlalchemy import select
 from backend.config import settings
 from backend.deps import Services, services
 from backend.review.service import VerdictError, learn, submit_verdict
-from backend.store.models import CandidateRow, Decision, Org, ResourceRow, Role, Scan, Scope, User, Verdict
+from backend.store.models import (
+    CandidateRow,
+    CandidateStatus,
+    Decision,
+    Org,
+    ResourceRow,
+    Role,
+    Scan,
+    Scope,
+    User,
+    Verdict,
+)
 
 log = logging.getLogger(__name__)
 ACTION_TITLES = {"stop": "Stop", "rightsize": "Rightsize", "snapshot_delete": "Snapshot + delete",
@@ -35,27 +47,41 @@ def memory_line(text: str, limit: int = 280) -> str:
     return (" → ".join(picked) or (lines[0] if lines else ""))[:limit]
 
 
+def _action_title(cand: dict[str, Any], resource: dict[str, Any]) -> str:
+    proposed = re.search(r"proposed (\S+)", cand.get("signals_text", ""))
+    verb = {"stop": "Stop", "rightsize": "Rightsize", "snapshot_delete": "Delete (after snapshot)",
+            "modify_gp3": "Switch to gp3", "release": "Release", "delete_snapshot": "Delete snapshot",
+            "s3_lifecycle": "Add lifecycle rule to"}.get(cand["action"], cand["action"])
+    title = f"{verb} {resource['name']}"
+    if cand["action"] == "rightsize" and proposed:
+        title += f" to {proposed.group(1)}"
+    return f"{title}: save ${cand.get('monthly_saving') or 0:,.0f}/mo"
+
+
 def candidate_blocks(cand: dict[str, Any], resource: dict[str, Any], decision: dict[str, Any],
-                     memories: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    title = f"{ACTION_TITLES.get(cand['action'], cand['action'])} *{resource['name']}*"
-    if decision.get("decision") == "ask":
-        title = f":question: Needs a human: {title}"
+                     memories: list[dict[str, Any]], status_line: str | None = None) -> list[dict[str, Any]]:
+    """Figma 14 "Recommendation block". status_line replaces the buttons once someone has decided."""
+    ask = decision.get("decision") == "ask"
     br = cand.get("blast_radius") or {}
-    fields = [
-        f"*Resource*\n`{resource['id']}` ({resource['type']})",
-        f"*Est. saving*\n${cand.get('monthly_saving') or 0:,.2f}/month",
-        f"*Signals*\n{cand.get('signals_text', '')}",
-        f"*Blast radius*\n{br.get('count', 0)} resource(s)",
-    ]
-    blocks: list[dict[str, Any]] = [
-        {"type": "section", "text": {"type": "mrkdwn", "text": title}},
-        {"type": "section", "fields": [{"type": "mrkdwn", "text": f} for f in fields]},
-    ]
-    if decision.get("reason"):
-        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": f"Agent: {decision['reason']}"}]})
+    n = br.get("count", 0)
+    where = " · ".join(x for x in (resource.get("account"), resource.get("region")) if x)
+    blast = f"{n} dependent{'s' if n != 1 else ''}" + (f" ({', '.join(br.get('names', [])[:3])})" if n else "")
     if memories:
-        bullets = "\n".join(f"• {memory_line(m['text'])}" for m in memories[:3])
-        blocks.append({"type": "section", "text": {"type": "mrkdwn", "text": f"*Memories consulted*\n{bullets}"}})
+        mem = "Memory checked: " + memory_line(memories[0]["text"])
+    else:
+        mem = "Memory checked: no past decisions about this pattern"
+    blocks: list[dict[str, Any]] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f"{':question:' if ask else ':large_orange_circle:'} "
+                                                               f"*{_action_title(cand, resource)}*"
+                                                               + (f"    _{where}_" if where else "")}},
+        {"type": "section", "text": {"type": "mrkdwn", "text":
+            f"*Why flagged:* {cand.get('signals_text', '')}\n*Blast radius:* {blast}"
+            + (f"\n*Needs your input:* {decision['reason']}" if ask and decision.get("reason") else "")}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text": f":sparkles: {mem}"}]},
+    ]
+    if status_line:
+        blocks.append({"type": "context", "elements": [{"type": "mrkdwn", "text": status_line}]})
+        return blocks
     blocks.append({"type": "actions", "block_id": "review", "elements": [
         {"type": "button", "action_id": "approve", "text": {"type": "plain_text", "text": "Approve"},
          "style": "primary", "value": cand["id"]},
@@ -65,6 +91,37 @@ def candidate_blocks(cand: dict[str, Any], resource: dict[str, Any], decision: d
          "value": cand["id"]},
         {"type": "button", "action_id": "why", "text": {"type": "plain_text", "text": "Why?"}, "value": cand["id"]},
     ]})
+    return blocks
+
+
+def row_blocks(s: Any, row: CandidateRow, status_line: str | None = None) -> list[dict[str, Any]]:
+    res = s.get(ResourceRow, row.resource_id)
+    decision = row.agent_decision_json or {}
+    return candidate_blocks(
+        {"id": row.id, "action": row.action, "monthly_saving": row.monthly_saving, "signals_text": row.signals_text,
+         "blast_radius": row.blast_radius},
+        {"id": res.aws_id, "name": res.name, "type": res.type, "account": (res.data_json or {}).get("account_alias"),
+         "region": (res.data_json or {}).get("region")}, decision, decision.get("memories", []), status_line)
+
+
+SCOPE_TEXT = {"similar": "all accounts", "this_resource": "this resource", "team": "your team"}
+
+
+def learned_blocks(v: Verdict) -> list[dict[str, Any]]:
+    """Figma 15 thread reply: the rule card."""
+    r = v.learned_rule_json or {}
+    blocks: list[dict[str, Any]] = [
+        {"type": "section", "text": {"type": "mrkdwn", "text": f":sparkles: *Rule learned*\n*{r.get('text')}*"}},
+        {"type": "context", "elements": [{"type": "mrkdwn", "text":
+            f"Confirmed {r.get('proof_count', 1)}× · applies to {SCOPE_TEXT.get(v.scope.value, 'all accounts')}"
+            " · look-alikes will be skipped"}]},
+    ]
+    if settings.APP_URL:
+        blocks.append({"type": "actions", "elements": [
+            {"type": "button", "text": {"type": "plain_text", "text": "View rule"},
+             "url": f"{settings.APP_URL}/#rules"},
+            {"type": "button", "text": {"type": "plain_text", "text": "View playbook"},
+             "url": f"{settings.APP_URL}/#playbook"}]})
     return blocks
 
 
@@ -126,18 +183,37 @@ def post_candidate(client: Any, cand: dict[str, Any], resource: dict[str, Any], 
                                    blocks=candidate_blocks(cand, resource, decision, memories))
 
 
+MAX_PER_SCAN = 10  # more than this: one summary message pointing at the dashboard
+
+
 def make_notifier(client: Any, svc: Services = services):
-    """Pipeline hook: post each pending/asked candidate to the review channel."""
+    """Pipeline hook: a scan summary (incl. what learned rules skipped), then one message per recommendation."""
     def notify(org: Org, scan_id: str, rows: list[CandidateRow]) -> None:
-        channel = ((org.settings_json or {}).get("slack") or {}).get("channel") if org else None
+        channel = (((org.settings_json or {}).get("slack") or {}).get("channel") if org else None) \
+            or settings.SLACK_REVIEW_CHANNEL
         with svc.session_factory() as s:
-            for row in rows:
+            skipped = list(s.scalars(select(CandidateRow).where(CandidateRow.scan_id == scan_id,
+                                                              CandidateRow.status == CandidateStatus.suppressed)))
+            accounts = sorted({(s.get(ResourceRow, r.resource_id).data_json or {}).get("account_alias")
+                               or "your account" for r in rows}) or ["your account"]
+            summary = [{"type": "section", "text": {"type": "mrkdwn", "text":
+                f"*{len(rows)} new recommendation{'s' if len(rows) != 1 else ''}* from today’s scan of "
+                f"{', '.join(accounts)}" + (f" · {len(skipped)} skipped by learned rules" if skipped else "") + "."}}]
+            for sk in skipped[:5]:
+                res = s.get(ResourceRow, sk.resource_id)
+                why = (sk.agent_decision_json or {}).get("reason", "")
+                summary.append({"type": "context", "elements": [{"type": "mrkdwn",
+                                "text": f":sparkles: *Skipped {res.name}:* {why} No action needed."}]})
+            if len(rows) > MAX_PER_SCAN:
+                summary.append({"type": "context", "elements": [{"type": "mrkdwn", "text":
+                    "Too many to post one by one. Review them in the CloudSense dashboard."
+                    + (f" {settings.APP_URL}/#recommendations" if settings.APP_URL else "")}]})
+            client.chat_postMessage(channel=channel, text=f"{len(rows)} new CloudSense recommendations",
+                                    blocks=summary)
+            for row in rows[:MAX_PER_SCAN]:
                 res = s.get(ResourceRow, row.resource_id)
-                decision = row.agent_decision_json or {}
-                post_candidate(client, {"id": row.id, "action": row.action, "monthly_saving": row.monthly_saving,
-                                        "signals_text": row.signals_text, "blast_radius": row.blast_radius},
-                               {"id": res.aws_id, "name": res.name, "type": res.type}, decision,
-                               decision.get("memories", []), channel=channel)
+                client.chat_postMessage(channel=channel, text=f"CloudSense: {row.action} {res.name}?",
+                                        blocks=row_blocks(s, row))
     return notify
 
 
@@ -155,8 +231,9 @@ def _simple_verdict(body: dict[str, Any], client: Any, svc: Services, decision: 
         except VerdictError as e:
             client.chat_postEphemeral(channel=channel, user=slack_id, text=str(e))
             return None
-    word = "Approved" if decision == Decision.approve else "Snoozed for 30 days"
-    client.chat_postMessage(channel=channel, thread_ts=ts, text=f"{word} by <@{slack_id}>.")
+        line = (f":white_check_mark: Approved by <@{slack_id}> · queued for execution" if decision == Decision.approve
+                else f":zzz: Snoozed for 30 days by <@{slack_id}>")
+        client.chat_update(channel=channel, ts=ts, text=line, blocks=row_blocks(s, cand, line))
     return None
 
 
@@ -206,12 +283,18 @@ def handle_reject_submit(ack: Any, body: dict[str, Any], client: Any, svc: Servi
             client.chat_postEphemeral(channel=meta["channel"], user=slack_id, text=str(e))
             return None
         verdict_id = v.id
+    with svc.session_factory() as s:
+        line = f":x: Rejected by <@{slack_id}>: “{reason}”"
+        client.chat_update(channel=meta["channel"], ts=meta["ts"], text=line,
+                           blocks=row_blocks(s, s.get(CandidateRow, meta["cand_id"]), line))
     reply = client.chat_postMessage(channel=meta["channel"], thread_ts=meta["ts"],
                                     text="Got it. I'll remember this. Learning…")
     _run(learn(svc, verdict_id, timeout_s=learn_timeout_s))
     with svc.session_factory() as s:
-        text = learned_text(s.get(Verdict, verdict_id))
-    client.chat_update(channel=meta["channel"], ts=reply["ts"], text=text)
+        v = s.get(Verdict, verdict_id)
+        text = learned_text(v)
+        blocks = learned_blocks(v) if v.learning_status == "learned" and v.learned_rule_json else None
+    client.chat_update(channel=meta["channel"], ts=reply["ts"], text=text, **({"blocks": blocks} if blocks else {}))
     return None
 
 

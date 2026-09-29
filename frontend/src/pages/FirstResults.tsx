@@ -4,18 +4,10 @@ import { api, money, ORG, post, type Candidate, type ScanDetail } from "../api";
 import { Icon } from "../components/Icon";
 import { Banner } from "../components/form";
 import { useLoad } from "../components/ui";
-import { ACTION, RejectModal } from "./Queue";
+import { describe, RejectModal } from "./Queue";
 
 const TYPE_ICON: Record<string, LucideIcon> = { ec2: Server, rds: Database, ebs: HardDrive, snapshot: HardDrive, s3: Database };
 
-function describe(c: Candidate): string {
-  const proposed = c.signals_text.match(/proposed (\S+)/)?.[1];
-  if (c.action === "rightsize" && proposed) return `Rightsize → ${proposed}`;
-  if (c.action === "stop") return "Stop (snapshot first)";
-  if (c.action === "snapshot_delete") return "Delete after snapshot";
-  if (c.action === "modify_gp3") return "Switch gp2 → gp3";
-  return ACTION[c.action] ?? c.action;
-}
 
 /** Figma 10: shown once, right after the first scan. */
 export default function FirstResults({ scanId }: { scanId: string }) {

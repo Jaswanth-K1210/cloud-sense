@@ -157,3 +157,10 @@ def test_real_client_uses_one_sdk_client_per_event_loop(monkeypatch) -> None:
     a1, a2 = asyncio.run(grab())
     b1, _ = asyncio.run(grab())  # a new loop, like the Slack worker's asyncio.run per click
     assert a1 is a2 and a1 is not b1 and len(made) == 2
+
+
+async def test_fake_reflect_handles_one_line_seed_rules() -> None:
+    mc, org = InMemoryMemoryClient(), Org()
+    await seed_accepted(mc, org, ["dr-standby"])
+    ans = await mc.reflect(org, "Can we stop standby databases?")
+    assert "standbys" in ans.text and ans.based_on

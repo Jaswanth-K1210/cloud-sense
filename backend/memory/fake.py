@@ -144,7 +144,10 @@ class InMemoryMemoryClient:
     async def reflect(self, org: Any, question: str) -> ReflectAnswer:
         self.calls.append("reflect")
         hits = self._search(org, question)
-        text = "Based on past decisions: " + " | ".join(h.text.splitlines()[-2] for h in hits) if hits else \
+        def gist(t: str) -> str:  # the verdict line of a retained decision, or the whole (one-line) seed rule
+            return next((ln for ln in t.splitlines() if ln.startswith("Verdict:")), t.splitlines()[0] if t else "")
+
+        text = "Based on past decisions: " + " | ".join(gist(h.text) for h in hits) if hits else \
             "No relevant past decisions."
         return ReflectAnswer(text=text, based_on=hits)
 
