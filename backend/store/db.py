@@ -10,7 +10,16 @@ from backend.config import settings
 from backend.store.models import Base
 
 
+def normalize_url(url: str) -> str:
+    """Neon/Supabase/RDS hand out postgres:// or postgresql:// URLs; SQLAlchemy would pick psycopg2 for those."""
+    for prefix in ("postgres://", "postgresql://"):
+        if url.startswith(prefix):
+            return "postgresql+psycopg://" + url[len(prefix):]
+    return url
+
+
 def make_engine(url: str) -> Engine:
+    url = normalize_url(url)
     if url.startswith("sqlite"):
         kwargs: dict = {"connect_args": {"check_same_thread": False}}
         if ":memory:" in url or url == "sqlite://":

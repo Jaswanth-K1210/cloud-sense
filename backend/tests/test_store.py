@@ -94,3 +94,13 @@ def test_seed_is_idempotent(s: Session) -> None:
     seed(s)
     seed(s)
     assert s.query(User).count() == 2
+
+
+def test_normalize_url_uses_psycopg3_for_hosted_postgres() -> None:
+    from backend.store.db import normalize_url
+
+    neon = "postgresql://u:p@ep-x.neon.tech/neondb?sslmode=require&channel_binding=require"
+    assert normalize_url(neon) == "postgresql+psycopg://u:p@ep-x.neon.tech/neondb?sslmode=require&channel_binding=require"
+    assert normalize_url("postgres://u@h/db") == "postgresql+psycopg://u@h/db"
+    assert normalize_url("sqlite:///x.db") == "sqlite:///x.db"
+    assert normalize_url("postgresql+psycopg://u@h/db") == "postgresql+psycopg://u@h/db"
