@@ -59,8 +59,8 @@ SDK signatures were verified against `hindsight-client` 0.10.1; where they diffe
 
 ```bash
 make install
-make demo          # API on :8000
-make frontend      # dashboard on :5173: create an account, follow the 6 setup steps, run the first scan
+make demo          # API server starts on http://localhost:8000
+make frontend      # Dashboard UI on http://localhost:5173: create an account, follow the 6 setup steps, run the first scan
 ```
 
 **Real setup**

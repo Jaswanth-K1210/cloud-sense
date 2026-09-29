@@ -41,6 +41,8 @@ def _hit(r: Any) -> MemoryHit:
 
 
 class MemoryClient:
+    """Async client managing Hindsight memory banks, retention, and recall for CloudSense."""
+
     def __init__(self, hs: Hindsight | None = None) -> None:
         self._fixed = hs  # injected (tests): used as-is
         # The SDK's HTTP session is bound to the event loop that first used it; the Slack worker and

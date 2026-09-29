@@ -26,3 +26,4 @@ Where BUILD_DOC and the SDK disagree, the SDK wins; each case is listed below.
 Consolidation is asynchronous and bank-deduplicated; `wait_for_consolidation` polls
 pending + processing operations until both are zero or the timeout passes.
 Measure the real latency with `python -m backend.memory.smoke`.
+Client instances are cached per running event loop via weak references (`_per_loop`) to avoid loop-mismatch errors across async tasks.
