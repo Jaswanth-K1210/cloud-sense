@@ -108,7 +108,8 @@ def test_auth_and_roles(client: TestClient) -> None:
         "alias": "x", "aws_account_id": "1", "role_arn": "local"})
     assert r.status_code == 403
     assert client.delete("/orgs/acme/rules/x", headers=REVIEWER).status_code == 403
-    assert len(client.get("/orgs/acme/users").json()) == 2
+    assert client.get("/orgs/acme/users").status_code == 401
+    assert len(client.get("/orgs/acme/users", headers=REVIEWER).json()) == 2
 
 
 def test_scan_records_account_errors(client: TestClient) -> None:

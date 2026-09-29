@@ -1,5 +1,4 @@
-import { api, currentUserId, money, ORG, type Candidate, type Metrics, type Rule, type ScanDetail,
-  type User } from "../api";
+import { api, money, ORG, type Candidate, type Metrics, type Rule, type ScanDetail } from "../api";
 import { Icon } from "../components/Icon";
 import { relTime, TopBar, useShell } from "../components/Shell";
 import { useLoad } from "../components/ui";
@@ -9,16 +8,16 @@ const SERVICE: Record<string, string> = { ec2: "EC2", ebs: "EBS", rds: "RDS", s3
 const BAR_PX_PER_100 = 180; // Figma: 91% -> 164px
 const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
 
-interface Data { metrics: Metrics; rules: Rule[]; scan: ScanDetail | null; me: User | undefined }
+interface Data { metrics: Metrics; rules: Rule[]; scan: ScanDetail | null }
 
 async function load(): Promise<Data> {
-  const [metrics, rules, scans, users] = await Promise.all([
+  const [metrics, rules, scans] = await Promise.all([
     api<Metrics>(`/orgs/${ORG}/metrics`), api<Rule[]>(`/orgs/${ORG}/rules`),
-    api<{ id: string; status: string }[]>(`/orgs/${ORG}/scans`), api<User[]>(`/orgs/${ORG}/users`),
+    api<{ id: string; status: string }[]>(`/orgs/${ORG}/scans`),
   ]);
   const done = scans.find((s) => s.status === "done");
   const scan = done ? await api<ScanDetail>(`/orgs/${ORG}/scans/${done.id}`) : null;
-  return { metrics, rules, scan, me: users.find((u) => u.id === currentUserId()) };
+  return { metrics, rules, scan };
 }
 
 const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
@@ -135,7 +134,8 @@ export default function Overview() {
         </div></>
     );
 
-  const { metrics, rules, scan, me } = data;
+  const { metrics, rules, scan } = data;
+  const me = shell.me.user;
   const s = metrics.series;
   const latest = s.at(-1);
   const prev = s.at(-2);

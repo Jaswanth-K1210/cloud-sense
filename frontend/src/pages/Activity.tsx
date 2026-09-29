@@ -15,6 +15,13 @@ const LABEL: Record<string, (d: Record<string, unknown>) => string> = {
   hard_rules_updated: () => "Updated hard rules",
   templates_accepted: (d) => `Added starter rules: ${(d.rule_ids as string[] | undefined)?.join(", ")}`,
   rule_deleted: () => "Deleted a learned rule",
+  signed_up: () => "Created the workspace",
+  workspace_updated: (d) => `Updated company details${d.name ? ` (${d.name})` : ""}`,
+  settings_updated: (d) => `Changed settings: ${Object.keys(d).filter((k) => k !== "onboarding_step").join(", ").replace("onboarded", "finished setup")}`,
+  account_updated: (d) => `Updated AWS account ${d.alias ?? ""}`.trim(),
+  account_removed: (d) => `Removed AWS account ${d.alias ?? ""}`.trim(),
+  member_updated: (d) => `Updated team member ${d.member ?? ""}${d.role ? ` (role: ${d.role})` : ""}`,
+  password_changed: () => "Changed their password",
 };
 
 export default function Activity() {

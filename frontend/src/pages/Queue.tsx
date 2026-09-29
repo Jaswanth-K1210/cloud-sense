@@ -4,7 +4,7 @@ import { api, money, ORG, post, type Action, type Candidate, type MemoryHit, typ
 import { useShell } from "../components/Shell";
 import { MemoryList, Modal, PageState, PageTitle, StatusTag, useLoad, Voice } from "../components/ui";
 
-const ACTION: Record<string, string> = {
+export const ACTION: Record<string, string> = {
   stop: "Stop", rightsize: "Rightsize", snapshot_delete: "Snapshot, then delete", modify_gp3: "Change gp2 to gp3",
   release: "Release", delete_snapshot: "Delete snapshot", s3_lifecycle: "Add a lifecycle rule",
 };
@@ -150,7 +150,7 @@ function LearningBanner({ v }: { v: Verdict }) {
   );
 }
 
-function RejectModal({ c, onClose, onSubmit }: { c: Candidate; onClose: () => void; onSubmit: (b: Record<string, unknown>) => void }) {
+export function RejectModal({ c, onClose, onSubmit }: { c: Candidate; onClose: () => void; onSubmit: (b: Record<string, unknown>) => void }) {
   const [reason, setReason] = useState("");
   const [scope, setScope] = useState("this_resource");
   const [until, setUntil] = useState("");
@@ -198,6 +198,11 @@ function WhyModal({ c, onClose }: { c: Candidate; onClose: () => void }) {
 }
 
 function Approved({ items, onChange }: { items: Candidate[]; onChange: () => void }) {
+  const { org } = useShell();
+  const safety = org?.settings.safety ?? {};
+  const recommendOnly = (safety.mode ?? "recommend") === "recommend";
+  const mustType = Boolean(safety.type_confirm) && org?.dry_run === false;
+  const [typing, setTyping] = useState<Record<string, string>>({});
   const [result, setResult] = useState<Record<string, Action | string>>({});
   const run = async (c: Candidate) => {
     try {
@@ -229,7 +234,20 @@ function Approved({ items, onChange }: { items: Candidate[]; onChange: () => voi
                 <StatusTag status={c.status} />
                 <span className="font-medium">{ACTION[c.action] ?? c.action} {c.resource.name}</span>
                 <span className="text-sm text-muted">{money(c.monthly_saving)}/month</span>
-                {c.status === "approved" && <button className="btn ml-auto" onClick={() => run(c)}>Execute</button>}
+                {c.status === "approved" && (recommendOnly
+                  ? <span className="ml-auto text-xs text-muted">Recommend-only mode: <a href="#settings/safety" className="font-medium text-approve">enable safe actions</a> to execute</span>
+                  : mustType && typing[c.id] !== undefined ? (
+                    <span className="ml-auto flex items-center gap-2">
+                      <input aria-label={`Type ${c.resource.name} to confirm`} autoFocus placeholder={`Type ${c.resource.name}`}
+                        className="h-8 rounded-lg border border-rule px-2 text-[13px]" value={typing[c.id]}
+                        onChange={(e) => setTyping((t) => ({ ...t, [c.id]: e.target.value }))} />
+                      <button className="btn btn-reject" disabled={typing[c.id] !== c.resource.name} onClick={() => run(c)}>Run for real</button>
+                    </span>
+                  ) : (
+                    <button className="btn ml-auto" onClick={() => (mustType ? setTyping((t) => ({ ...t, [c.id]: "" })) : run(c))}>
+                      {org?.dry_run ? "Execute (dry run)" : "Execute"}
+                    </button>
+                  ))}
               </div>
               {typeof r === "string" && <p className="mt-2 text-sm text-reject">{r}</p>}
               {r && typeof r !== "string" && (

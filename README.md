@@ -60,7 +60,7 @@ SDK signatures were verified against `hindsight-client` 0.10.1; where they diffe
 ```bash
 make install
 make demo          # API on :8000
-make frontend      # dashboard on :5173, pick a user in the header, then "Run a scan"
+make frontend      # dashboard on :5173: create an account, follow the 6 setup steps, run the first scan
 ```
 
 **Real setup**
@@ -116,7 +116,7 @@ credentials (fresh bank per seed) to produce that, and replace the plot.
 - **Cold start.** An empty bank knows nothing; the starter rules in Settings help, but the first scans rely on
   signals and hard rules.
 - **Savings are estimates** from a bundled us-east-1 price list, not reconciled with Cost Explorer.
-- **Demo-grade auth.** Users are picked with an `X-User-Id` header. Put SSO in front before real use.
+- **Simple auth.** Email + password accounts with session tokens; no SSO, email verification or team invites yet.
 - **RDS stops are temporary**: AWS restarts a stopped instance after 7 days. CloudSense logs a reminder, and
   recommends snapshot + delete for databases that are truly dead.
 - Memory utilization is unknown without the CloudWatch agent, so rightsizing uses CPU only.

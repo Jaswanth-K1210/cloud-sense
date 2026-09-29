@@ -1,13 +1,15 @@
-import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import { api, currentUserId, ORG, post, setCurrentUserId, type Metrics, type ScanSummary, type User } from "../api";
+import { Building2, LogOut, UserRound } from "lucide-react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState, type ReactNode } from "react";
+import { api, ORG, post, type Me, type Metrics, type OrgInfo, type ScanSummary } from "../api";
 import { Icon, type IconName } from "./Icon";
 
-interface OrgInfo { name: string; dry_run: boolean; accounts: { id: string }[] }
 interface ShellData {
   org: OrgInfo | null; lastScan: ScanSummary | null; openCount: number | null; ruleCount: number | null;
-  reviews: number; users: User[];
+  reviews: number;
 }
-interface ShellCtx extends ShellData { refresh: () => void; scanNow: () => Promise<void>; scanning: boolean }
+interface ShellCtx extends ShellData {
+  me: Me; refresh: () => void; scanNow: () => Promise<string | null>; scanning: boolean;
+}
 
 const Ctx = createContext<ShellCtx | null>(null);
 export const useShell = () => useContext(Ctx)!;
@@ -34,19 +36,19 @@ export function relTime(iso: string | null | undefined): string {
 
 const initials = (name: string) => name.split(/\s+/).map((w) => w[0]).join("").slice(0, 2).toUpperCase();
 
-export function Shell({ page, children }: { page: string; children: ReactNode }) {
+export function Shell({ page, me, onLogout, children }: {
+  page: string; me: Me; onLogout: () => void; children: ReactNode;
+}) {
   const [data, setData] = useState<ShellData>({ org: null, lastScan: null, openCount: null, ruleCount: null,
-    reviews: 0, users: [] });
-  const [userId, setUserId] = useState(currentUserId);
+    reviews: 0 });
   const [scanning, setScanning] = useState(false);
 
   const refresh = useCallback(async () => {
-    const [org, scans, rules, metrics, users] = await Promise.all([
+    const [org, scans, rules, metrics] = await Promise.all([
       api<OrgInfo>(`/orgs/${ORG}`).catch(() => null),
       api<ScanSummary[]>(`/orgs/${ORG}/scans`).catch(() => [] as ScanSummary[]),
       api<unknown[]>(`/orgs/${ORG}/rules`).catch(() => null),
       api<Metrics>(`/orgs/${ORG}/metrics`).catch(() => null),
-      api<User[]>(`/orgs/${ORG}/users`).catch(() => [] as User[]),
     ]);
     let openCount: number | null = null;
     const last = scans[0] ?? null;
@@ -55,26 +57,28 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
       openCount = d ? d.recommended.length + d.asked.length : null;
     }
     const reviews = (metrics?.series ?? []).reduce((n, s) => n + s.approved + s.rejected, 0);
-    setData({ org, lastScan: last, openCount, ruleCount: rules ? rules.length : null, reviews, users });
+    setData({ org, lastScan: last, openCount, ruleCount: rules ? rules.length : null, reviews });
   }, []);
 
-  useEffect(() => { refresh(); }, [refresh, page, userId]);
+  useEffect(() => { refresh(); }, [refresh, page]);
 
-  const scanNow = async () => {
+  const scanNow = async (): Promise<string | null> => {
     setScanning(true);
     try {
-      await post(`/orgs/${ORG}/scans`);
+      const r = await post<{ scan_id: string }>(`/orgs/${ORG}/scans`);
       await refresh();
+      return r.scan_id;
+    } catch {
+      return null;
     } finally {
       setScanning(false);
     }
   };
 
-  const me = data.users.find((u) => u.id === userId);
   const badge = (key: string) => (key === "recommendations" ? data.openCount : key === "rules" ? data.ruleCount : null);
 
   return (
-    <Ctx.Provider value={{ ...data, refresh, scanNow, scanning }}>
+    <Ctx.Provider value={{ ...data, me, refresh, scanNow, scanning }}>
       <div className="flex min-h-screen bg-paper">
         <aside className="sticky top-0 flex h-screen w-[248px] shrink-0 flex-col gap-1 bg-side-bg px-3.5 py-5">
           <a href="#overview" className="flex items-center gap-2.5 px-2 pb-3 pt-1">
@@ -85,7 +89,7 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
           </a>
           <div className="flex items-center gap-2 rounded-lg bg-side-raised px-2.5 py-2">
             <div className="flex min-w-0 flex-1 flex-col gap-0.5">
-              <p className="truncate text-[13px] font-semibold text-white">{data.org?.name ?? "…"}</p>
+              <p className="truncate text-[13px] font-semibold text-white">{data.org?.name ?? me.org.name}</p>
               <p className="text-[11px] text-side-text">
                 {data.org ? `${data.org.accounts.length} AWS account${data.org.accounts.length === 1 ? "" : "s"}` : " "}
               </p>
@@ -117,24 +121,55 @@ export function Shell({ page, children }: { page: string; children: ReactNode })
               {data.ruleCount ?? 0} rule{data.ruleCount === 1 ? "" : "s"} learned from {data.reviews} review{data.reviews === 1 ? "" : "s"}
             </p>
           </div>
-          <label className="relative flex cursor-pointer items-center gap-2.5 rounded-lg px-2 py-2.5 hover:bg-side-raised/60">
-            <span className="flex size-[30px] items-center justify-center rounded-full bg-side-avatar text-[11px] font-semibold text-white">
-              {me ? initials(me.name) : "?"}
-            </span>
-            <span className="flex flex-col gap-px">
-              <span className="text-[13px] font-semibold text-white">{me?.name ?? userId}</span>
-              <span className="text-[11px] capitalize text-side-text">{me?.role ?? "demo user"}</span>
-            </span>
-            {/* Demo-grade auth: switch which user you act as. */}
-            <select aria-label="Acting as" className="absolute inset-0 cursor-pointer opacity-0" value={userId}
-              onChange={(e) => { setCurrentUserId(e.target.value); setUserId(e.target.value); }}>
-              {data.users.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
-            </select>
-          </label>
+          <UserMenu me={me} onLogout={onLogout} />
         </aside>
-        <main key={userId} className="flex min-w-0 flex-1 flex-col gap-5 px-8 pb-8 pt-7">{children}</main>
+        <main className="flex min-w-0 flex-1 flex-col gap-5 px-8 pb-8 pt-7">{children}</main>
       </div>
     </Ctx.Provider>
+  );
+}
+
+function UserMenu({ me, onLogout }: { me: Me; onLogout: () => void }) {
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open) return;
+    const close = (e: MouseEvent) => !ref.current?.contains(e.target as Node) && setOpen(false);
+    const esc = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    document.addEventListener("mousedown", close);
+    document.addEventListener("keydown", esc);
+    return () => { document.removeEventListener("mousedown", close); document.removeEventListener("keydown", esc); };
+  }, [open]);
+  const item = "flex w-full items-center gap-2.5 rounded-md px-2.5 py-2 text-left text-[13px] text-ink hover:bg-paper";
+  return (
+    <div ref={ref} className="relative">
+      {open && (
+        <div role="menu" className="absolute bottom-full left-0 right-0 mb-2 rounded-lg border border-rule bg-panel p-1.5 shadow-lg">
+          <p className="truncate px-2.5 pb-1.5 pt-1 text-xs text-muted">{me.user.email}</p>
+          <a role="menuitem" href="#profile" className={item} onClick={() => setOpen(false)}>
+            <UserRound size={15} strokeWidth={1.75} /> Profile
+          </a>
+          <a role="menuitem" href="#settings" className={item} onClick={() => setOpen(false)}>
+            <Building2 size={15} strokeWidth={1.75} /> Company details
+          </a>
+          <div className="my-1 h-px bg-rule" />
+          <button role="menuitem" className={`${item} text-reject`} onClick={onLogout}>
+            <LogOut size={15} strokeWidth={1.75} /> Log out
+          </button>
+        </div>
+      )}
+      <button aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen(!open)}
+        className="flex w-full items-center gap-2.5 rounded-lg px-2 py-2.5 text-left hover:bg-side-raised/60">
+        <span className="flex size-[30px] shrink-0 items-center justify-center rounded-full bg-side-avatar text-[11px] font-semibold text-white">
+          {initials(me.user.name)}
+        </span>
+        <span className="flex min-w-0 flex-1 flex-col gap-px">
+          <span className="truncate text-[13px] font-semibold text-white">{me.user.name}</span>
+          <span className="text-[11px] capitalize text-side-text">{me.user.role}</span>
+        </span>
+        <Icon name="chev" size={14} className={`text-side-text transition-transform ${open ? "rotate-180" : ""}`} />
+      </button>
+    </div>
   );
 }
 
@@ -158,7 +193,8 @@ export function TopBar({ title, subtitle, children }: { title: string; subtitle?
         <span className="text-[13px] text-muted">
           {lastScan?.status === "running" ? "Scanning…" : `Last scan ${relTime(lastScan?.started_at)}`}
         </span>
-        <button className="btn" onClick={scanNow} disabled={scanning || lastScan?.status === "running"}>
+        <button className="btn" disabled={scanning || lastScan?.status === "running"}
+          onClick={async () => { const id = await scanNow(); if (id) window.location.hash = `scan/${id}`; }}>
           {scanning ? "Starting…" : "Scan now"}
         </button>
         <a href="#activity" aria-label="Activity" className="rounded-lg border border-rule bg-panel p-2 text-ink hover:border-muted">

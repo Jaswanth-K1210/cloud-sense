@@ -18,7 +18,8 @@ def utcnow() -> datetime:
 
 
 class Base(DeclarativeBase):
-    type_annotation_map = {dict[str, Any]: JSON, list[Any]: JSON, datetime: DateTime(timezone=True)}
+    type_annotation_map = {dict[str, Any]: JSON, dict[str, Any] | None: JSON, list[Any]: JSON,
+                           datetime: DateTime(timezone=True)}
 
 
 class CandidateStatus(enum.StrEnum):
@@ -56,6 +57,8 @@ class Org(Base):
     hindsight_bank: Mapped[str] = mapped_column(String(200))
     hard_rules: Mapped[list[Any]] = mapped_column(default=list)  # -> Hindsight directives
     external_id: Mapped[str] = mapped_column(String(100), default=new_id)  # sts:ExternalId for onboarding
+    # Onboarding answers + workspace settings: profile, services, schedule, slack, safety, onboarding_step.
+    settings_json: Mapped[dict[str, Any] | None] = mapped_column(default=dict)
     created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
@@ -81,6 +84,7 @@ class Scan(Base):
     resource_count: Mapped[int] = mapped_column(Integer, default=0)
     candidate_count: Mapped[int] = mapped_column(Integer, default=0)
     errors: Mapped[list[Any]] = mapped_column(default=list)
+    progress: Mapped[dict[str, Any] | None] = mapped_column(default=dict)  # {step, counts, account}
 
 
 class ResourceRow(Base):
@@ -151,6 +155,16 @@ class User(Base):
     email: Mapped[str] = mapped_column(String(300), default="")
     slack_id: Mapped[str | None] = mapped_column(String(50), default=None, index=True)
     role: Mapped[Role] = mapped_column(Enum(Role), default=Role.viewer)
+    password_hash: Mapped[str | None] = mapped_column(String(300), default=None)
+
+
+class AuthSession(Base):
+    """Login sessions. Only a SHA-256 of the bearer token is stored."""
+
+    __tablename__ = "auth_sessions"
+    token_hash: Mapped[str] = mapped_column(String(64), primary_key=True)
+    user_id: Mapped[str] = mapped_column(ForeignKey("users.id"), index=True)
+    created_at: Mapped[datetime] = mapped_column(default=utcnow)
 
 
 class AuditLog(Base):

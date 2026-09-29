@@ -1,10 +1,12 @@
 """CloudSense backend FastAPI entry point."""
 
+import asyncio
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend import scheduler
 from backend.api.routes import router
 from backend.config import settings
 from backend.deps import services
@@ -22,7 +24,9 @@ async def lifespan(_: FastAPI):
         from backend.review.slack_app import make_notifier
 
         services.notify_review = make_notifier(WebClient(token=settings.SLACK_BOT_TOKEN))
+    task = asyncio.create_task(scheduler.loop(services))
     yield
+    task.cancel()
 
 
 app = FastAPI(title="CloudSense", lifespan=lifespan)

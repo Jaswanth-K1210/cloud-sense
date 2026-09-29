@@ -1,20 +1,26 @@
 const BASE = (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:8000";
-export const ORG = (import.meta.env.VITE_ORG_ID as string | undefined) ?? "acme";
-const USER_KEY = "cloudsense.user";
+const TOKEN_KEY = "cloudsense.token";
 
-export function currentUserId(): string {
+/** The signed-in user's workspace id. A live binding: set after login, read by every page at call time. */
+export let ORG = "";
+export function setOrg(id: string): void {
+  ORG = id;
+}
+
+export function getToken(): string | null {
   try {
-    return localStorage.getItem(USER_KEY) ?? "u-reviewer";
+    return localStorage.getItem(TOKEN_KEY);
   } catch {
-    return "u-reviewer";
+    return null;
   }
 }
 
-export function setCurrentUserId(id: string): void {
+export function setToken(token: string | null): void {
   try {
-    localStorage.setItem(USER_KEY, id);
+    if (token) localStorage.setItem(TOKEN_KEY, token);
+    else localStorage.removeItem(TOKEN_KEY);
   } catch {
-    /* private mode: picker still works for this page load */
+    /* private mode: the session lasts for this page load only */
   }
 }
 
@@ -25,9 +31,11 @@ export class ApiError extends Error {
 }
 
 export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const token = getToken();
   const res = await fetch(`${BASE}${path}`, {
     ...init,
-    headers: { "Content-Type": "application/json", "X-User-Id": currentUserId(), ...(init.headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.headers ?? {}) },
   });
   if (!res.ok) {
     let detail = res.statusText;
@@ -36,11 +44,18 @@ export async function api<T>(path: string, init: RequestInit = {}): Promise<T> {
     } catch {
       /* non-JSON error body */
     }
+    if (res.status === 401 && token) {
+      setToken(null);
+      window.dispatchEvent(new Event("cloudsense:logout")); // session expired: back to login
+    }
+    if (Array.isArray(detail)) detail = (detail as { msg: string }[]).map((d) => d.msg.replace(/^Value error, /, "")).join("; ");
     throw new ApiError(res.status, typeof detail === "string" ? detail : JSON.stringify(detail));
   }
   return res.status === 204 ? (undefined as T) : res.json();
 }
 
+export const put = <T>(path: string, body: unknown) => api<T>(path, { method: "PUT", body: JSON.stringify(body) });
+export const patch = <T>(path: string, body: unknown) => api<T>(path, { method: "PATCH", body: JSON.stringify(body) });
 export const post = <T>(path: string, body?: unknown) =>
   api<T>(path, { method: "POST", body: body === undefined ? undefined : JSON.stringify(body) });
 
@@ -62,10 +77,12 @@ export interface Candidate {
 }
 export interface ScanDetail {
   id: string; status: string; started_at: string; finished_at: string | null; resource_count: number;
-  candidate_count: number; errors: Record<string, string>[];
+  candidate_count: number; errors: Record<string, string>[]; progress?: ScanProgress;
   recommended: Candidate[]; asked: Candidate[]; suppressed: Candidate[]; reviewed: Candidate[];
 }
-export interface ScanSummary { id: string; status: string; started_at: string; resource_count: number; candidate_count: number }
+export interface ScanProgress { step?: number; account?: string; counts?: Record<string, number> }
+export interface ScanSummary { id: string; status: string; started_at: string; resource_count: number;
+  candidate_count: number; progress?: ScanProgress }
 export interface Verdict {
   id: string; decision: string; reason: string; scope: string; learning_status: string;
   learned_rule: { id: string; text: string; proof_count: number } | null;
@@ -76,7 +93,20 @@ export interface Metrics {
     suppressed: number; acceptance_rate: number | null; found: number; rules_learned: number }[];
   savings: { found: number; approved: number; executed: number; approved_count: number; executed_count: number };
 }
-export interface User { id: string; name: string; role: string }
+export interface User { id: string; name: string; role: string; email?: string; slack_id?: string | null }
+export interface OrgSettings {
+  onboarding_step?: number; onboarded?: boolean; services?: string[]; schedule?: "daily" | "weekly" | "manual";
+  profile?: { role?: string | null; team_size?: string | null; spend?: string | null };
+  slack?: { channel?: string; weekly_summary?: boolean };
+  safety?: { mode?: "recommend" | "actions"; dry_run?: boolean; type_confirm?: boolean };
+}
+export interface Me { user: User & { email: string }; org: { id: string; name: string; settings: OrgSettings } }
+export interface OrgInfo {
+  id: string; name: string; hard_rules: string[]; external_id: string; principal_arn: string; dry_run: boolean;
+  settings: OrgSettings;
+  accounts: { id: string; alias: string; aws_account_id: string; role_arn: string; regions: string[];
+    action_role_arn: string | null }[];
+}
 export interface Action { id: string; kind: string; status: string; api_calls: { service: string; op: string; params: unknown }[];
   undo_handle: Record<string, unknown> }
 

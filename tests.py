@@ -13,6 +13,7 @@ Exit code 0 when every check passes.
 
 import argparse
 import asyncio
+import os
 import sys
 import time
 from datetime import UTC, datetime, timedelta
@@ -25,6 +26,7 @@ from sqlalchemy.orm import sessionmaker
 
 ROOT = Path(__file__).parent
 sys.path.insert(0, str(ROOT / "infra" / "sandbox-seed"))
+os.environ["ALLOW_USER_HEADER"] = "true"  # act as seeded users without logging in (before backend imports)
 
 import launch_lookalike  # noqa: E402
 import seed as sandbox  # noqa: E402
@@ -239,8 +241,6 @@ def main() -> int:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--live", action="store_true", help="use real Hindsight + Groq from .env (AWS stays simulated)")
     a = p.parse_args()
-    import os
-
     os.environ.update({"AWS_ACCESS_KEY_ID": "testing", "AWS_SECRET_ACCESS_KEY": "testing",
                        "AWS_SESSION_TOKEN": "testing", "AWS_DEFAULT_REGION": REGION})
     os.environ.pop("AWS_PROFILE", None)

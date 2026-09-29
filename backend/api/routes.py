@@ -1,8 +1,10 @@
-"""REST API (BUILD_DOC section 11), plus a few read endpoints the dashboard needs.
+"""REST API (BUILD_DOC section 11), plus auth, onboarding and the read endpoints the dashboard needs.
 
-Auth is demo-grade: the X-User-Id header names a row in `users`. Replace with SSO before production.
+Auth: email + password, bearer-token sessions (backend/auth.py). X-User-Id is accepted only when
+ALLOW_USER_HEADER is set (tests and simulations).
 """
 
+import logging
 from datetime import datetime
 from typing import Annotated, Any
 
@@ -11,6 +13,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
+from backend import auth
 from backend.config import settings
 from backend.deps import services
 from backend.graph.blast_radius import blast_radius
@@ -37,15 +40,25 @@ from backend.store.models import (
 )
 
 router = APIRouter()
+log = logging.getLogger(__name__)
 DB = Annotated[Session, Depends(get_session)]
 
 
 # ---------- auth ----------
 
-def current_user(s: DB, x_user_id: Annotated[str | None, Header()] = None) -> User:
-    user = s.get(User, x_user_id) if x_user_id else None
+def bearer(authorization: Annotated[str | None, Header()] = None) -> str | None:
+    if authorization and authorization.lower().startswith("bearer "):
+        return authorization[7:].strip()
+    return None
+
+
+def current_user(s: DB, token: Annotated[str | None, Depends(bearer)],
+                 x_user_id: Annotated[str | None, Header()] = None) -> User:
+    user = auth.user_for_token(s, token) if token else None
+    if user is None and x_user_id and settings.ALLOW_USER_HEADER:
+        user = s.get(User, x_user_id)
     if user is None:
-        raise HTTPException(401, "unknown or missing X-User-Id")
+        raise HTTPException(401, "Please log in.")
     return user
 
 
@@ -89,13 +102,140 @@ def verdict_json(v: Verdict) -> dict[str, Any]:
             "learning_status": v.learning_status, "learned_rule": v.learned_rule_json or None}
 
 
-# ---------- org, users, accounts ----------
+# ---------- auth + profile ----------
+
+EMAIL_RE = r"^[^@\s]+@[^@\s]+\.[^@\s]+$"
+
+
+class SignupIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(pattern=EMAIL_RE, max_length=300)
+    password: str = Field(min_length=auth.MIN_PASSWORD, max_length=200)
+
+
+class LoginIn(BaseModel):
+    email: str
+    password: str
+
+
+def _company_from_email(email: str) -> str:
+    domain = email.split("@")[1].split(".")[0]
+    return domain.capitalize() if domain not in ("gmail", "outlook", "yahoo", "hotmail", "icloud") else "My workspace"
+
+
+def me_json(s: Session, user: User) -> dict[str, Any]:
+    org = s.get(Org, user.org_id)
+    return {"user": {"id": user.id, "name": user.name, "email": user.email, "role": user.role.value,
+                     "slack_id": user.slack_id},
+            "org": {"id": org.id, "name": org.name, "settings": org.settings_json or {}}}
+
+
+@router.post("/auth/signup", status_code=201)
+def signup(body: SignupIn, s: DB) -> dict[str, Any]:
+    email = body.email.strip().lower()
+    if s.scalars(select(User).where(func.lower(User.email) == email)).first():
+        raise HTTPException(409, "An account with this email already exists. Log in instead.")
+    org = repo.create_org(s, _company_from_email(email))
+    org.settings_json = {"onboarding_step": 1}
+    user = User(org_id=org.id, name=body.name.strip(), email=email, role=Role.admin,
+                password_hash=auth.hash_password(body.password))
+    s.add(user)
+    s.flush()
+    repo.log_audit(s, org.id, user.id, "signed_up", {"email": email})
+    token = auth.new_session(s, user)
+    s.commit()
+    return {"token": token, **me_json(s, user)}
+
+
+@router.post("/auth/login")
+def login(body: LoginIn, s: DB) -> dict[str, Any]:
+    user = s.scalars(select(User).where(func.lower(User.email) == body.email.strip().lower())).first()
+    if user is None or not auth.check_password(body.password, user.password_hash):
+        raise HTTPException(401, "Email or password is incorrect.")
+    token = auth.new_session(s, user)
+    s.commit()
+    return {"token": token, **me_json(s, user)}
+
+
+@router.post("/auth/logout", status_code=204)
+def logout(s: DB, token: Annotated[str | None, Depends(bearer)]) -> None:
+    if token:
+        auth.end_session(s, token)
+        s.commit()
+
+
+@router.get("/auth/me")
+def me(s: DB, user: CurrentUser) -> dict[str, Any]:
+    return me_json(s, user)
+
+
+class ProfileIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    email: str = Field(pattern=EMAIL_RE, max_length=300)
+
+
+@router.put("/me")
+def update_profile(body: ProfileIn, s: DB, user: CurrentUser) -> dict[str, Any]:
+    email = body.email.strip().lower()
+    clash = s.scalars(select(User).where(func.lower(User.email) == email, User.id != user.id)).first()
+    if clash:
+        raise HTTPException(409, "Another account already uses this email.")
+    user.name, user.email = body.name.strip(), email
+    s.commit()
+    return me_json(s, user)
+
+
+class PasswordIn(BaseModel):
+    current: str
+    new: str = Field(min_length=auth.MIN_PASSWORD, max_length=200)
+
+
+@router.post("/me/password", status_code=204)
+def change_password(body: PasswordIn, s: DB, user: CurrentUser,
+                    token: Annotated[str | None, Depends(bearer)]) -> None:
+    if not auth.check_password(body.current, user.password_hash):
+        raise HTTPException(400, "Your current password is incorrect.")
+    user.password_hash = auth.hash_password(body.new)
+    auth.end_all_sessions(s, user, keep=token)  # sign out other devices
+    repo.log_audit(s, user.org_id, user.id, "password_changed", {})
+    s.commit()
+
+
+# ---------- org, team, accounts ----------
 
 @router.get("/orgs/{org_id}/users")
-def list_users(org_id: str, s: DB) -> list[dict[str, Any]]:
-    """Unauthenticated on purpose: feeds the demo user picker."""
-    return [{"id": u.id, "name": u.name, "role": u.role.value}
-            for u in s.scalars(select(User).where(User.org_id == org_id))]
+def list_users(org_id: str, s: DB, user: CurrentUser) -> list[dict[str, Any]]:
+    org = org_for(s, org_id, user)
+    return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role.value, "slack_id": u.slack_id}
+            for u in s.scalars(select(User).where(User.org_id == org.id).order_by(User.name))]
+
+
+class MemberIn(BaseModel):
+    role: Role | None = None
+    slack_id: str | None = None
+
+
+@router.patch("/orgs/{org_id}/users/{user_id}")
+def update_member(org_id: str, user_id: str, body: MemberIn, s: DB, user: CurrentUser) -> dict[str, Any]:
+    org = org_for(s, org_id, user)
+    need(user, Role.admin)
+    member = s.get(User, user_id)
+    if member is None or member.org_id != org.id:
+        raise HTTPException(404, "member not found")
+    if body.role is not None:
+        if member.id == user.id and body.role != Role.admin:
+            raise HTTPException(400, "You can't remove your own admin role.")
+        member.role = body.role
+    if body.slack_id is not None:
+        member.slack_id = body.slack_id.strip() or None
+    repo.log_audit(s, org.id, user.id, "member_updated", {"member": member.name, **body.model_dump(mode="json",
+                                                                                                   exclude_none=True)})
+    s.commit()
+    return {"id": member.id, "role": member.role.value, "slack_id": member.slack_id}
+
+
+def effective_dry_run(org: Org) -> bool:
+    return (org.settings_json or {}).get("safety", {}).get("dry_run", settings.DRY_RUN)
 
 
 @router.get("/orgs/{org_id}")
@@ -103,18 +243,99 @@ def get_org(org_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
     org = org_for(s, org_id, user)
     accounts = s.scalars(select(Account).where(Account.org_id == org.id))
     return {"id": org.id, "name": org.name, "hard_rules": org.hard_rules, "external_id": org.external_id,
-            "principal_arn": settings.CLOUDSENSE_PRINCIPAL_ARN, "dry_run": settings.DRY_RUN,
+            "principal_arn": settings.CLOUDSENSE_PRINCIPAL_ARN, "dry_run": effective_dry_run(org),
+            "settings": org.settings_json or {},
             "accounts": [{"id": a.id, "alias": a.alias, "aws_account_id": a.aws_account_id, "role_arn": a.role_arn,
                           "regions": a.regions, "action_role_arn": a.action_role_arn} for a in accounts]}
 
 
+class WorkspaceIn(BaseModel):
+    name: str = Field(min_length=1, max_length=200)
+    role: str | None = None
+    team_size: str | None = None
+    spend: str | None = None
+
+
+@router.put("/orgs/{org_id}/workspace")
+async def update_workspace(org_id: str, body: WorkspaceIn, s: DB, user: CurrentUser) -> dict[str, Any]:
+    """Company details (onboarding step 1 and Settings). Also creates the org's private memory bank."""
+    org = org_for(s, org_id, user)
+    need(user, Role.admin)
+    org.name = body.name.strip()
+    org.settings_json = {**(org.settings_json or {}), "profile": body.model_dump(exclude={"name"})}
+    repo.log_audit(s, org.id, user.id, "workspace_updated", {"name": org.name})
+    s.commit()
+    memory_ready = True
+    try:
+        await services.memory.ensure_bank(org)
+    except Exception as e:  # memory can be set up later; never block onboarding
+        log.warning("ensure_bank failed for %s: %s", org.id, e)
+        memory_ready = False
+    return {"name": org.name, "settings": org.settings_json, "memory_ready": memory_ready}
+
+
+SETTING_KEYS = {"services", "schedule", "slack", "safety", "onboarding_step", "onboarded"}
+
+
+@router.put("/orgs/{org_id}/settings")
+def update_settings(org_id: str, body: dict[str, Any], s: DB, user: CurrentUser) -> dict[str, Any]:
+    org = org_for(s, org_id, user)
+    need(user, Role.admin)
+    unknown = set(body) - SETTING_KEYS
+    if unknown:
+        raise HTTPException(400, f"unknown settings: {', '.join(sorted(unknown))}")
+    org.settings_json = {**(org.settings_json or {}), **body}
+    if set(body) - {"onboarding_step"}:
+        repo.log_audit(s, org.id, user.id, "settings_updated", body)
+    s.commit()
+    return {"settings": org.settings_json, "dry_run": effective_dry_run(org)}
+
+
 class AccountIn(BaseModel):
     alias: str
-    aws_account_id: str
+    aws_account_id: str = ""
     role_arn: str
     external_id: str | None = None
-    regions: list[str] = Field(default_factory=lambda: ["us-east-1"])
+    regions: list[str] | None = None
     action_role_arn: str | None = None
+
+
+def explain_aws_error(e: Exception) -> str:
+    """Turn an AWS error into the exact fix (UI_WORKFLOW step 2)."""
+    code = getattr(e, "response", {}).get("Error", {}).get("Code", "") if hasattr(e, "response") else ""
+    msg = str(e)
+    if code == "AccessDenied" and "AssumeRole" in msg:
+        return ("The role's trust policy doesn't include your External ID (or CloudSense's principal). "
+                "Fix: re-run Launch Stack from this page, or add the External ID to the role's trust policy.")
+    if code in ("NoSuchEntity", "InvalidClientTokenId") or "does not exist" in msg:
+        return "Role not found. Check the Role ARN from the stack's Outputs tab."
+    if code in ("UnauthorizedOperation", "AccessDenied", "AccessDeniedException"):
+        op = msg.split("perform: ")[-1].split(" ")[0] if "perform: " in msg else "a describe call"
+        return f"Missing permission {op}. Fix: update the stack to the latest CloudSense template."
+    if "Unable to locate credentials" in msg or "NoCredentials" in type(e).__name__:
+        return "CloudSense itself has no AWS credentials to assume your role. Set them on the server first."
+    return f"AWS said: {msg}"
+
+
+def probe_regions(session: Any) -> tuple[str, dict[str, int]]:
+    """Account id + resource counts per region (EC2 instances + EBS volumes), in parallel."""
+    from concurrent.futures import ThreadPoolExecutor
+
+    account_id = session.client("sts").get_caller_identity()["Account"]
+    session.client("ec2", region_name="us-east-1").describe_instances(MaxResults=5)  # permission check
+    regions = [r["RegionName"] for r in session.client("ec2", region_name="us-east-1").describe_regions()["Regions"]]
+
+    def count(region: str) -> tuple[str, int]:
+        try:
+            ec2 = session.client("ec2", region_name=region)
+            n = sum(len(r["Instances"]) for r in ec2.describe_instances(MaxResults=50)["Reservations"])
+            return region, n + len(ec2.describe_volumes(MaxResults=50)["Volumes"])
+        except Exception:
+            return region, 0
+
+    with ThreadPoolExecutor(max_workers=16) as pool:
+        found = dict(pool.map(count, regions))
+    return account_id, {r: n for r, n in found.items() if n}
 
 
 @router.post("/orgs/{org_id}/accounts", status_code=201)
@@ -122,15 +343,68 @@ def connect_account(org_id: str, body: AccountIn, s: DB, user: CurrentUser) -> d
     org = org_for(s, org_id, user)
     need(user, Role.admin)
     external_id = body.external_id or org.external_id
-    if body.role_arn != "local":
-        try:
-            assume_role(body.role_arn, external_id).client("sts").get_caller_identity()
+    aws_account_id, found = body.aws_account_id, {}
+    if settings.APP_ENV != "offline":  # offline mode scans the eval accounts, not AWS
+        try:  # role_arn "local" = this server's own AWS credentials (developer setup)
+            aws_account_id, found = probe_regions(assume_role(body.role_arn, external_id))
         except Exception as e:
-            raise HTTPException(400, f"cannot assume role with this ExternalId: {e}") from e
-    acct = repo.add_account(s, org.id, **{**body.model_dump(), "external_id": external_id})
+            raise HTTPException(400, explain_aws_error(e)) from e
+    regions = body.regions or sorted(found, key=lambda r: -found[r]) or ["us-east-1"]
+    acct = repo.add_account(s, org.id, alias=body.alias,
+                            aws_account_id=aws_account_id or ("local" if body.role_arn == "local" else "unknown"),
+                            role_arn=body.role_arn, external_id=external_id, regions=regions,
+                            action_role_arn=body.action_role_arn)
     repo.log_audit(s, org.id, user.id, "account_connected", {"alias": acct.alias})
     s.commit()
-    return {"id": acct.id, "alias": acct.alias}
+    return {"id": acct.id, "alias": acct.alias, "aws_account_id": acct.aws_account_id, "regions": acct.regions,
+            "resources_by_region": found, "resource_count": sum(found.values())}
+
+
+class AccountPatch(BaseModel):
+    alias: str | None = None
+    regions: list[str] | None = None
+    action_role_arn: str | None = None
+
+
+@router.patch("/accounts/{account_id}")
+def update_account(account_id: str, body: AccountPatch, s: DB, user: CurrentUser) -> dict[str, Any]:
+    acct = s.get(Account, account_id)
+    if acct is None or acct.org_id != user.org_id:
+        raise HTTPException(404, "account not found")
+    need(user, Role.admin)
+    for k, v in body.model_dump(exclude_none=True).items():
+        setattr(acct, k, v)
+    repo.log_audit(s, acct.org_id, user.id, "account_updated", {"alias": acct.alias})
+    s.commit()
+    return {"id": acct.id, "alias": acct.alias, "regions": acct.regions, "action_role_arn": acct.action_role_arn}
+
+
+@router.delete("/accounts/{account_id}", status_code=204)
+def remove_account(account_id: str, s: DB, user: CurrentUser) -> None:
+    acct = s.get(Account, account_id)
+    if acct is None or acct.org_id != user.org_id:
+        raise HTTPException(404, "account not found")
+    need(user, Role.admin)
+    if s.scalars(select(ResourceRow).where(ResourceRow.account_id == acct.id)).first():
+        raise HTTPException(409, "This account already has scan history; it can't be removed.")
+    s.delete(acct)
+    repo.log_audit(s, user.org_id, user.id, "account_removed", {"alias": acct.alias})
+    s.commit()
+
+
+@router.get("/slack/status")
+def slack_status(user: CurrentUser) -> dict[str, Any]:
+    """Whether the server has a Slack bot token, and which workspace it belongs to (tokens are never returned)."""
+    if not settings.SLACK_BOT_TOKEN:
+        return {"connected": False, "reason": "SLACK_BOT_TOKEN is not set on the server."}
+    try:
+        from slack_sdk import WebClient
+
+        r = WebClient(token=settings.SLACK_BOT_TOKEN).auth_test()
+        return {"connected": True, "team": r.get("team"), "url": r.get("url"), "bot": r.get("user"),
+                "socket_mode": bool(settings.SLACK_APP_TOKEN)}
+    except Exception as e:
+        return {"connected": False, "reason": f"Slack rejected the token: {e}"}
 
 
 class HardRulesIn(BaseModel):
@@ -189,7 +463,7 @@ def start_scan(org_id: str, s: DB, user: CurrentUser, bg: BackgroundTasks, body:
 def list_scans(org_id: str, s: DB, user: CurrentUser) -> list[dict[str, Any]]:
     org = org_for(s, org_id, user)
     return [{"id": x.id, "status": x.status, "started_at": x.started_at, "finished_at": x.finished_at,
-             "resource_count": x.resource_count, "candidate_count": x.candidate_count}
+             "resource_count": x.resource_count, "candidate_count": x.candidate_count, "progress": x.progress or {}}
             for x in s.scalars(select(Scan).where(Scan.org_id == org.id).order_by(Scan.started_at.desc()))]
 
 
@@ -204,6 +478,7 @@ def get_scan(org_id: str, scan_id: str, s: DB, user: CurrentUser) -> dict[str, A
     cands = [cand_json(c, r) for c, r in rows]
     return {"id": scan.id, "status": scan.status, "started_at": scan.started_at, "finished_at": scan.finished_at,
             "resource_count": scan.resource_count, "candidate_count": scan.candidate_count, "errors": scan.errors,
+            "progress": scan.progress or {},
             "recommended": [c for c in cands if c["status"] == "pending"],
             "asked": [c for c in cands if c["status"] == "asked"],
             "suppressed": [c for c in cands if c["status"] == "suppressed"],
@@ -259,8 +534,11 @@ def execute_candidate(cand_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
 
     cand = candidate_for(s, cand_id, user)
     need(user, Role.reviewer, Role.admin)
+    org = s.get(Org, user.org_id)
+    if (org.settings_json or {}).get("safety", {}).get("mode") == "recommend":
+        raise HTTPException(409, "This workspace is in Recommend-only mode. Switch to Safe actions in Settings.")
     try:
-        return action_json(execute(s, cand, actor=user.id))
+        return action_json(execute(s, cand, actor=user.id, dry_run=effective_dry_run(org)))
     except ExecutionError as e:
         raise HTTPException(409, str(e)) from e
 

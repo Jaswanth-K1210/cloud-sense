@@ -129,6 +129,7 @@ def post_candidate(client: Any, cand: dict[str, Any], resource: dict[str, Any], 
 def make_notifier(client: Any, svc: Services = services):
     """Pipeline hook: post each pending/asked candidate to the review channel."""
     def notify(org: Org, scan_id: str, rows: list[CandidateRow]) -> None:
+        channel = ((org.settings_json or {}).get("slack") or {}).get("channel") if org else None
         with svc.session_factory() as s:
             for row in rows:
                 res = s.get(ResourceRow, row.resource_id)
@@ -136,7 +137,7 @@ def make_notifier(client: Any, svc: Services = services):
                 post_candidate(client, {"id": row.id, "action": row.action, "monthly_saving": row.monthly_saving,
                                         "signals_text": row.signals_text, "blast_radius": row.blast_radius},
                                {"id": res.aws_id, "name": res.name, "type": res.type}, decision,
-                               decision.get("memories", []))
+                               decision.get("memories", []), channel=channel)
     return notify
 
 
