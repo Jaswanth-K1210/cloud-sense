@@ -1,106 +1,252 @@
-import { useState } from "react";
-import { CartesianGrid, Line, LineChart, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { api, money, ORG, post, type Metrics, type Rule } from "../api";
-import { PageState, PageTitle, useLoad, Voice } from "../components/ui";
+import { api, currentUserId, money, ORG, type Candidate, type Metrics, type Rule, type ScanDetail,
+  type User } from "../api";
+import { Icon } from "../components/Icon";
+import { relTime, TopBar, useShell } from "../components/Shell";
+import { useLoad } from "../components/ui";
 
-const pct = (v: number | null) => (v === null ? "no verdicts" : `${Math.round(v * 100)}%`);
+const SERVICE: Record<string, string> = { ec2: "EC2", ebs: "EBS", rds: "RDS", s3: "S3", eip: "Elastic IPs",
+  snapshot: "Snapshots" };
+const BAR_PX_PER_100 = 180; // Figma: 91% -> 164px
+const pct = (v: number | null | undefined) => (v === null || v === undefined ? "—" : `${Math.round(v * 100)}%`);
+
+interface Data { metrics: Metrics; rules: Rule[]; scan: ScanDetail | null; me: User | undefined }
+
+async function load(): Promise<Data> {
+  const [metrics, rules, scans, users] = await Promise.all([
+    api<Metrics>(`/orgs/${ORG}/metrics`), api<Rule[]>(`/orgs/${ORG}/rules`),
+    api<{ id: string; status: string }[]>(`/orgs/${ORG}/scans`), api<User[]>(`/orgs/${ORG}/users`),
+  ]);
+  const done = scans.find((s) => s.status === "done");
+  const scan = done ? await api<ScanDetail>(`/orgs/${ORG}/scans/${done.id}`) : null;
+  return { metrics, rules, scan, me: users.find((u) => u.id === currentUserId()) };
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** Figma: "today 9:42 AM"; older scans show the weekday or date. */
+function scanTime(iso: string): string {
+  const d = new Date(iso.endsWith("Z") || iso.includes("+") ? iso : `${iso}Z`);
+  const time = d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+  const days = Math.floor((new Date().setHours(0, 0, 0, 0) - new Date(d).setHours(0, 0, 0, 0)) / 864e5);
+  if (days === 0) return `today ${time}`;
+  if (days === 1) return `yesterday ${time}`;
+  return `${d.toLocaleDateString([], days < 7 ? { weekday: "long" } : { month: "short", day: "numeric" })} ${time}`;
+}
+
+function greeting(): string {
+  const h = new Date().getHours();
+  return h < 12 ? "Good morning" : h < 18 ? "Good afternoon" : "Good evening";
+}
+
+function Kpi({ label, value, unit, note, noteClass = "text-approve", violet = false }: {
+  label: string; value: string; unit?: string; note: string; noteClass?: string; violet?: boolean;
+}) {
+  return (
+    <div className={`flex min-w-[180px] flex-1 flex-col gap-1.5 rounded-xl border p-5 ${violet ? "border-learned-line bg-learned-card" : "border-rule bg-panel"}`}>
+      <p className="text-[13px] font-medium text-muted">{label}</p>
+      <p className="flex items-baseline gap-1">
+        <span className={`text-[30px] font-bold tracking-[-0.3px] ${violet ? "text-learned" : "text-ink"}`}>{value}</span>
+        {unit && <span className="text-sm text-muted">{unit}</span>}
+      </p>
+      <p className={`text-xs font-medium ${violet ? "text-learned" : noteClass}`}>{note}</p>
+    </div>
+  );
+}
+
+function RuleChip() {
+  return (
+    <span className="flex items-center gap-[3px] rounded-full bg-learned-soft px-1.5 py-0.5 text-[10px] font-semibold text-learned">
+      <Icon name="sparkles" size={10} /> rule
+    </span>
+  );
+}
+
+function AcceptanceChart({ series }: { series: Metrics["series"] }) {
+  const last10 = series.slice(-10);
+  return (
+    <section className="card flex min-w-0 flex-1 flex-col gap-4 p-6" aria-label="Acceptance rate per scan">
+      <div className="flex items-center">
+        <div className="flex flex-1 flex-col gap-0.5">
+          <h2 className="text-base font-semibold text-ink">Acceptance rate per scan</h2>
+          <p className="text-[13px] text-muted">Higher = CloudSense understands your team better</p>
+        </div>
+        <span className="flex items-center gap-1.5 rounded-lg border border-rule bg-panel px-2.5 py-[7px] text-[13px] font-medium text-ink">
+          Last 10 scans <Icon name="chev" size={14} className="text-muted" />
+        </span>
+      </div>
+      {last10.length === 0 ? (
+        <p className="flex h-[250px] items-center justify-center text-sm text-muted">
+          No scans yet. Run a scan, then approve or reject what it finds.
+        </p>
+      ) : (
+        <div className="flex h-[250px] items-end justify-between gap-2">
+          {last10.map((s, i) => {
+            const latest = i === last10.length - 1;
+            const rate = s.acceptance_rate;
+            return (
+              <div key={s.scan_id} className="flex flex-col items-center gap-1.5"
+                title={`Scan ${series.length - last10.length + i + 1}: ${s.approved} approved, ${s.rejected} rejected, ${s.suppressed} skipped`}>
+                {s.rules_learned > 0 && <RuleChip />}
+                <span className={`text-[11px] font-semibold ${latest ? "text-approve" : "text-muted"}`}>{pct(rate)}</span>
+                <span className={`w-7 rounded-t-md ${latest ? "bg-approve" : "bg-approve-soft"}`}
+                  style={{ height: Math.max(4, (rate ?? 0) * BAR_PX_PER_100) }} />
+                <span className="text-[11px] text-muted">S{series.length - last10.length + i + 1}</span>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </section>
+  );
+}
+
+function recentLearning(rules: Rule[]) {
+  return [...rules]
+    .sort((a, b) => (b.updated_at ?? "").localeCompare(a.updated_at ?? ""))
+    .slice(0, 3)
+    .map((r) => {
+      const who = r.sources.map((s) => s.text.match(/Reviewer (.+?) \(/)?.[1]).find(Boolean);
+      return { id: r.id, text: r.text, count: r.proof_count, meta: [who, r.updated_at ? relTime(r.updated_at) : null].filter(Boolean).join(" · ") };
+    });
+}
+
+function grouped(cands: Candidate[], key: (c: Candidate) => string) {
+  const m = new Map<string, { total: number; open: number }>();
+  for (const c of cands) {
+    const g = m.get(key(c)) ?? { total: 0, open: 0 };
+    g.total += c.monthly_saving ?? 0;
+    g.open += 1;
+    m.set(key(c), g);
+  }
+  return [...m.entries()].sort((a, b) => b[1].total - a[1].total);
+}
 
 export default function Overview() {
-  const m = useLoad(() => api<Metrics>(`/orgs/${ORG}/metrics`));
-  const rules = useLoad(() => api<Rule[]>(`/orgs/${ORG}/rules`));
-  const [scanning, setScanning] = useState(false);
-  const [showTable, setShowTable] = useState(false);
+  const shell = useShell();
+  const { data, error, loading, reload } = useLoad(load, [shell.lastScan?.id, shell.lastScan?.status]);
 
-  const runScan = async () => {
-    setScanning(true);
-    try {
-      await post(`/orgs/${ORG}/scans`);
-      window.location.hash = "queue";
-    } finally {
-      setScanning(false);
-    }
-  };
+  if (loading && !data) return <><TopBar title="Overview" /><p className="py-10 text-muted" role="status">Loading…</p></>;
+  if (error || !data)
+    return (
+      <><TopBar title="Overview" />
+        <div className="card p-5" role="alert">
+          <p className="font-semibold text-reject">Couldn't load the overview: {error}</p>
+          <button className="btn mt-3" onClick={reload}>Try again</button>
+        </div></>
+    );
 
-  const series = (m.data?.series ?? []).map((s, i) => ({ ...s, label: `Scan ${i + 1}`,
-    rate: s.acceptance_rate === null ? null : Math.round(s.acceptance_rate * 100) }));
+  const { metrics, rules, scan, me } = data;
+  const s = metrics.series;
+  const latest = s.at(-1);
+  const prev = s.at(-2);
+  const firstRate = s.find((x) => x.acceptance_rate !== null)?.acceptance_rate;
+  const delta = prev ? metrics.savings.found - prev.found : null;
+  const rulesThisWeek = rules.filter((r) => r.updated_at && Date.now() - new Date(r.updated_at).getTime() < 7 * 864e5).length;
+  const open = scan ? [...scan.recommended, ...scan.asked] : [];
+  const byService = grouped(open, (c) => SERVICE[c.resource.type] ?? c.resource.type);
+  const byAccount = grouped(open, (c) => c.resource.account ?? "unknown");
+  const maxService = Math.max(1, ...byService.map(([, g]) => g.total));
+  const firstName = me?.name.split(" ")[0];
 
   return (
     <>
-      <PageTitle title="Overview">
-        <button className="btn btn-approve" onClick={runScan} disabled={scanning}>
-          {scanning ? "Starting scan…" : "Run a scan"}
-        </button>
-      </PageTitle>
-      <PageState loading={m.loading} error={m.error} onRetry={m.reload}
-        empty={m.data && m.data.series.length === 0 && "No scans yet. Connect an account in Settings, then run a scan."}>
-        {m.data && (
-          <>
-            <dl className="grid gap-px overflow-hidden rounded-lg border border-rule bg-rule sm:grid-cols-3">
-              {([["Waste found in the latest scan", m.data.savings.found],
-                 ["Approved by engineers", m.data.savings.approved],
-                 ["Executed", m.data.savings.executed]] as const).map(([label, v]) => (
-                <div key={label} className="bg-panel p-5">
-                  <dt className="text-sm text-muted">{label}</dt>
-                  <dd className="mt-1 text-3xl font-semibold tabular-nums">{money(v)}<span className="text-base font-normal text-muted">/month</span></dd>
-                </div>
-              ))}
-            </dl>
+      <TopBar title="Overview"
+        subtitle={`${greeting()}${firstName ? `, ${firstName}` : ""}. ${rulesThisWeek
+          ? `CloudSense learned ${rulesThisWeek} new rule${rulesThisWeek === 1 ? "" : "s"} this week.`
+          : rules.length ? `CloudSense knows ${rules.length} rule${rules.length === 1 ? "" : "s"} from your team.`
+            : "Reject a recommendation with a reason and CloudSense learns from it."}`} />
 
-            <section className="mt-8 rounded-lg border border-rule bg-panel p-5">
-              <div className="flex flex-wrap items-baseline justify-between gap-2">
-                <h2 className="font-semibold">Share of recommendations engineers approved, per scan</h2>
-                <button className="text-sm text-muted underline" onClick={() => setShowTable(!showTable)}>
-                  {showTable ? "Show chart" : "Show as table"}
-                </button>
+      <div className="flex flex-wrap gap-5">
+        <Kpi label="Potential savings" value={money(metrics.savings.found)} unit="/mo"
+          note={delta === null ? `${open.length} open recommendation${open.length === 1 ? "" : "s"}`
+            : `${delta >= 0 ? "+" : "−"}${money(Math.abs(delta))} vs last scan`} />
+        <Kpi label="Approved savings" value={money(metrics.savings.approved)} unit="/mo"
+          note={`${metrics.savings.approved_count} recommendation${metrics.savings.approved_count === 1 ? "" : "s"}`} />
+        <Kpi label="Realized savings" value={money(metrics.savings.executed)} unit="/mo" noteClass="text-success"
+          note={metrics.savings.executed_count ? "Executed, undo available" : "Nothing executed yet"} />
+        <Kpi violet label="Acceptance rate" value={pct(latest?.acceptance_rate)}
+          note={latest?.acceptance_rate != null && firstRate != null && s.length > 1
+            ? `${latest.acceptance_rate >= firstRate ? "+" : "−"}${Math.round(Math.abs(latest.acceptance_rate - firstRate) * 100)} pts since scan 1`
+            : "Approved ÷ (approved + rejected)"} />
+      </div>
+
+      <div className="flex flex-wrap items-start gap-5">
+        <AcceptanceChart series={s} />
+        <div className="flex w-full flex-col gap-5 lg:w-[380px]">
+          <section className="card flex flex-col gap-3 p-5">
+            <div className="flex items-center">
+              <h2 className="text-[15px] font-semibold text-ink">Recent learning</h2>
+              <span className="flex-1" />
+              <a href="#rules" className="text-sm font-semibold text-approve hover:underline">All rules</a>
+            </div>
+            {rules.length === 0 && <p className="text-[13px] text-muted">Nothing learned yet. Rejections with a reason show up here.</p>}
+            {recentLearning(rules).map((r) => (
+              <div key={r.id} className="flex items-start gap-2.5">
+                <span className="flex size-[26px] shrink-0 items-center justify-center rounded-full bg-learned-soft text-learned">
+                  <Icon name="sparkles" size={13} />
+                </span>
+                <div className="flex min-w-0 flex-1 flex-col gap-0.5">
+                  <p className="text-sm font-medium text-ink">{r.text}{r.count > 1 ? ` (${r.count}×)` : ""}</p>
+                  {r.meta && <p className="text-xs text-muted">{r.meta}</p>}
+                </div>
               </div>
-              <p className="mt-1 text-sm text-muted">Rising means the agent stopped proposing things your team keeps saying no to.</p>
-              {showTable ? (
-                <table className="mt-4 w-full text-sm">
-                  <thead className="text-left text-muted"><tr><th className="py-1">Scan</th><th>Approved</th><th>Rejected</th><th>Skipped by agent</th><th>Acceptance</th></tr></thead>
-                  <tbody>{series.map((s) => (
-                    <tr key={s.scan_id} className="border-t border-rule tabular-nums">
-                      <td className="py-1">{s.label}</td><td>{s.approved}</td><td>{s.rejected}</td><td>{s.suppressed}</td><td>{pct(s.acceptance_rate)}</td>
-                    </tr>))}</tbody>
-                </table>
-              ) : (
-                <div className="mt-4 h-64" role="img" aria-label="Acceptance rate per scan">
-                  <ResponsiveContainer>
-                    <LineChart data={series} margin={{ top: 8, right: 16, bottom: 0, left: -8 }}>
-                      <CartesianGrid stroke="rgb(var(--rule))" vertical={false} />
-                      <XAxis dataKey="label" tick={{ fill: "rgb(var(--muted))", fontSize: 12 }} axisLine={false} tickLine={false} />
-                      <YAxis domain={[0, 100]} unit="%" tick={{ fill: "rgb(var(--muted))", fontSize: 12 }} axisLine={false} tickLine={false} />
-                      <Tooltip
-                        contentStyle={{ background: "rgb(var(--panel))", border: "1px solid rgb(var(--rule))", color: "rgb(var(--ink))", borderRadius: 6 }}
-                        formatter={(v: number) => [`${v}%`, "Accepted"]}
-                        cursor={{ stroke: "rgb(var(--muted))", strokeDasharray: "3 3" }} />
-                      <Line type="monotone" dataKey="rate" stroke="rgb(var(--approve))" strokeWidth={2} connectNulls
-                        dot={{ r: 4, strokeWidth: 2, stroke: "rgb(var(--panel))", fill: "rgb(var(--approve))" }}
-                        activeDot={{ r: 6 }} isAnimationActive={false} />
-                    </LineChart>
-                  </ResponsiveContainer>
-                </div>
-              )}
-            </section>
-          </>
-        )}
-      </PageState>
-
-      <section className="mt-8">
-        <div className="mb-3 flex items-baseline justify-between">
-          <h2 className="font-semibold">What your engineers have taught it</h2>
-          <a href="#rules" className="text-sm text-muted underline">All learned rules</a>
-        </div>
-        <PageState loading={rules.loading} error={rules.error} onRetry={rules.reload}
-          empty={rules.data?.length === 0 && "Nothing learned yet. Reject a recommendation with a reason and it shows up here."}>
-          <ol className="grid gap-4 md:grid-cols-2">
-            {(rules.data ?? []).slice(0, 5).map((r) => (
-              <li key={r.id} className="rounded-lg border border-rule bg-panel p-4">
-                <Voice who={`Confirmed ${r.proof_count}×`}>{r.text}</Voice>
-              </li>
             ))}
-          </ol>
-        </PageState>
-      </section>
+          </section>
+
+          {scan && scan.asked.length > 0 && (
+            <a href="#recommendations" className="flex items-start gap-2.5 rounded-[10px] bg-warn-soft px-3.5 py-3 text-warn">
+              <Icon name="alert" size={18} />
+              <div className="flex flex-1 flex-col gap-0.5">
+                <p className="text-sm font-semibold">
+                  {scan.asked.length} recommendation{scan.asked.length === 1 ? " needs" : "s need"} your input
+                </p>
+                <p className="text-[13px] leading-[1.45] text-ink">
+                  CloudSense isn’t sure about {scan.asked.slice(0, 2).map((c) => c.resource.name).join(" and ")}
+                  {scan.asked.length > 2 ? ` and ${scan.asked.length - 2} more` : ""}.
+                </p>
+              </div>
+            </a>
+          )}
+
+          <section className="card flex flex-col gap-2.5 p-5">
+            <h2 className="text-sm font-semibold text-ink">
+              Last scan: {scan ? scanTime(scan.started_at) : "none yet"}
+            </h2>
+            <p className="text-[13px] text-muted">
+              {scan ? `${scan.resource_count} resources · ${plural(open.length, "recommendation")} · ${scan.suppressed.length} skipped`
+                : "Connect an account in Settings, then run a scan."}
+            </p>
+          </section>
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-start gap-5">
+        <section className="card flex min-w-0 flex-1 flex-col gap-3 p-6">
+          <h2 className="text-[15px] font-semibold text-ink">Potential savings by service</h2>
+          {byService.length === 0 && <p className="text-[13px] text-muted">No open recommendations.</p>}
+          {byService.map(([name, g]) => (
+            <div key={name} className="flex items-center gap-3">
+              <span className="w-[90px] text-[13px] text-muted">{name}</span>
+              <span className="h-2.5 flex-1 overflow-hidden rounded-[5px] bg-track">
+                <span className="block h-full rounded-[5px] bg-approve" style={{ width: `${(g.total / maxService) * 100}%` }} />
+              </span>
+              <span className="w-[70px] text-right text-[13px] font-semibold text-ink">{money(g.total)}</span>
+            </div>
+          ))}
+        </section>
+        <section className="card flex w-full flex-col gap-3 p-6 lg:w-[380px]">
+          <h2 className="text-[15px] font-semibold text-ink">By account</h2>
+          {byAccount.length === 0 && <p className="text-[13px] text-muted">No open recommendations.</p>}
+          {byAccount.map(([name, g]) => (
+            <div key={name} className="flex items-center gap-2.5">
+              <span className="text-sm font-medium text-ink">{name}</span>
+              <span className="flex-1" />
+              <span className="text-xs text-muted">{g.open} open</span>
+              <span className="text-sm font-semibold text-ink">{money(g.total)}/mo</span>
+            </div>
+          ))}
+        </section>
+      </div>
     </>
   );
 }

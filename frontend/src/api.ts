@@ -57,6 +57,7 @@ export interface Candidate {
   signals_text: string; blast_radius: { count: number; names: string[] }; status: string;
   agent: AgentDecision; reversible?: boolean; warnings?: string[];
   resource: { id: string; name: string; type: string; tags: Record<string, string>; owner_team: string | null;
+    account?: string | null;
     role_hints: string[]; iac_managed: boolean; region: string };
 }
 export interface ScanDetail {
@@ -72,8 +73,8 @@ export interface Verdict {
 export interface Rule { id: string; text: string; proof_count: number; tags: string[]; sources: MemoryHit[]; updated_at?: string | null }
 export interface Metrics {
   series: { scan_id: string; started_at: string; approved: number; rejected: number; shown: number;
-    suppressed: number; acceptance_rate: number | null }[];
-  savings: { found: number; approved: number; executed: number };
+    suppressed: number; acceptance_rate: number | null; found: number; rules_learned: number }[];
+  savings: { found: number; approved: number; executed: number; approved_count: number; executed_count: number };
 }
 export interface User { id: string; name: string; role: string }
 export interface Action { id: string; kind: string; status: string; api_calls: { service: string; op: string; params: unknown }[];

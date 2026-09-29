@@ -19,7 +19,7 @@ export default function Rules() {
 
   return (
     <>
-      <PageTitle title="Learned rules" />
+      <PageTitle title="Learned Rules" />
       <p className="-mt-4 mb-6 max-w-2xl text-sm text-muted">
         Each rule is consolidated from engineers' verdicts. The agent applies them to look-alike resources, even untagged ones.
         Hard rules you write in Settings always win.

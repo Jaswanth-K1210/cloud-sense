@@ -124,3 +124,9 @@ def test_scan_records_account_errors(client: TestClient) -> None:
         assert {"sandbox", "broken"} == {e["account"] for e in body["errors"]}
     finally:
         services.scan_account = old
+
+
+def test_activity_lists_audit_events(client: TestClient) -> None:
+    client.post("/orgs/acme/accounts", headers=ADMIN, json={"alias": "x", "aws_account_id": "1", "role_arn": "local"})
+    rows = client.get("/orgs/acme/activity", headers=REVIEWER).json()
+    assert rows[0]["event"] == "account_connected" and rows[0]["actor"] == "Ada Admin"

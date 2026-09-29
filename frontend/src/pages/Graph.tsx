@@ -8,9 +8,12 @@ interface GNode { id: string; type: string; name: string; status: string | null;
   role_hints: string[]; blast_radius: { count: number; ids: string[] } }
 interface GData { nodes: GNode[]; edges: { source: string; target: string }[] }
 
+// Design tokens (tailwind.config.js)
+const T = { ink: "#0c1a17", muted: "#5b6b66", rule: "#e1e7e5", panel: "#ffffff", approve: "#0f766e",
+  learned: "#6d28d9", reject: "#b91c1c", warn: "#b45309" };
 const COLOR: Record<string, string> = {
-  pending: "var(--ink)", asked: "var(--learned)", suppressed: "var(--learned)", approved: "var(--approve)",
-  executed: "var(--approve)", rejected: "var(--reject)", snoozed: "var(--muted)",
+  pending: T.reject, asked: T.warn, suppressed: T.learned, approved: T.approve, executed: T.ink,
+  rejected: T.muted, snoozed: T.muted,
 };
 
 /** Dependencies on the left, dependents to the right. */
@@ -51,28 +54,28 @@ export default function Graph() {
     const sel = data.nodes.find((n) => n.id === selected) ?? null;
     const hit = new Set(sel?.blast_radius.ids ?? []);
     const nodes: Node[] = data.nodes.map((n) => {
-      const c = n.status ? COLOR[n.status] : "var(--rule)";
+      const c = n.status ? COLOR[n.status] : T.rule;
       const lit = n.id === selected || hit.has(n.id);
       return {
         id: n.id, position: pos[n.id], data: { label: `${n.name}\n${n.type}` },
         style: {
           whiteSpace: "pre-line", fontSize: 12, width: 200, borderRadius: 6,
-          background: hit.has(n.id) ? "rgb(var(--reject) / 0.12)" : "rgb(var(--panel))", color: "rgb(var(--ink))",
-          border: `${n.status ? 2 : 1}px solid rgb(${c})`,
-          opacity: selected && !lit ? 0.35 : 1, boxShadow: n.id === selected ? "0 0 0 3px rgb(var(--focus))" : "none",
+          background: hit.has(n.id) ? "#b91c1c1f" : T.panel, color: T.ink,
+          border: `${n.status ? 2 : 1}px solid ${c}`,
+          opacity: selected && !lit ? 0.35 : 1, boxShadow: n.id === selected ? `0 0 0 3px ${T.approve}` : "none",
         },
       };
     });
     const edges: Edge[] = data.edges.map((e) => ({
       id: `${e.source}->${e.target}`, source: e.target, target: e.source,
-      style: { stroke: hit.has(e.source) || e.target === selected ? "rgb(var(--reject))" : "rgb(var(--muted))" },
+      style: { stroke: hit.has(e.source) || e.target === selected ? T.reject : T.muted },
     }));
     return { nodes, edges, sel };
   }, [g.data, selected]);
 
   return (
     <>
-      <PageTitle title="Dependency graph" />
+      <PageTitle title="Resource Map" subtitle="What depends on what, and what breaks if something goes away." />
       <PageState loading={g.loading} error={g.error} onRetry={g.reload}
         empty={!g.data && "No finished scan yet. Run a scan to see how your resources connect."}>
         <p className="mb-3 text-sm text-muted">Arrows point from a resource to what depends on it. Select a resource to see everything that breaks if it goes away.</p>
@@ -81,7 +84,7 @@ export default function Graph() {
             <ReactFlow nodes={nodes} edges={edges} fitView nodesDraggable={false}
               onNodeClick={(_, n) => setSelected(n.id === selected ? null : n.id)} onPaneClick={() => setSelected(null)}
               proOptions={{ hideAttribution: true }}>
-              <Background color="rgb(var(--rule))" gap={24} />
+              <Background color={T.rule} gap={24} />
               <Controls showInteractive={false} />
             </ReactFlow>
           </div>
@@ -101,8 +104,8 @@ export default function Graph() {
               <>
                 <p className="font-medium">Legend</p>
                 <ul className="mt-2 space-y-1">
-                  {[["pending", "Awaiting review"], ["suppressed", "Skipped by agent"], ["approved", "Approved"], ["rejected", "Rejected"]].map(([s, l]) => (
-                    <li key={s} className="flex items-center gap-2"><span className="inline-block h-3 w-3 rounded-sm border-2" style={{ borderColor: `rgb(${COLOR[s]})` }} />{l}</li>
+                  {[["pending", "Recommended"], ["suppressed", "Skipped (protected)"], ["approved", "Approved"], ["executed", "Stopped by CloudSense"]].map(([s, l]) => (
+                    <li key={s} className="flex items-center gap-2"><span className="inline-block h-3 w-3 rounded-sm border-2" style={{ borderColor: COLOR[s] }} />{l}</li>
                   ))}
                   <li className="flex items-center gap-2"><span className="inline-block h-3 w-3 rounded-sm border border-rule" />No recommendation</li>
                 </ul>

@@ -8,7 +8,7 @@ from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from backend.config import settings
@@ -23,6 +23,7 @@ from backend.store.db import get_session
 from backend.store.models import (
     Account,
     ActionRow,
+    AuditLog,
     CandidateRow,
     CandidateStatus,
     Decision,
@@ -77,6 +78,7 @@ def cand_json(c: CandidateRow, r: ResourceRow) -> dict[str, Any]:
             "monthly_saving": c.monthly_saving, "signals_text": c.signals_text, "blast_radius": c.blast_radius,
             "status": c.status.value, "agent": c.agent_decision_json, **c.extra_json,
             "resource": {"id": r.aws_id, "name": r.name, "type": r.type, "tags": r.tags_json,
+                         "account": r.data_json.get("account_alias"),
                          "owner_team": r.owner_team, "role_hints": r.role_hints_json,
                          "iac_managed": r.data_json.get("iac_managed", False), "region": r.data_json.get("region")}}
 
@@ -315,6 +317,17 @@ async def ask(org_id: str, body: AskIn, s: DB, user: CurrentUser) -> dict[str, A
     return ans.model_dump()
 
 
+# ---------- activity ----------
+
+@router.get("/orgs/{org_id}/activity")
+def activity(org_id: str, s: DB, user: CurrentUser, limit: int = 200) -> list[dict[str, Any]]:
+    org = org_for(s, org_id, user)
+    names = {u.id: u.name for u in s.scalars(select(User).where(User.org_id == org.id))}
+    rows = s.scalars(select(AuditLog).where(AuditLog.org_id == org.id).order_by(AuditLog.at.desc()).limit(limit))
+    return [{"id": a.id, "at": a.at, "actor": names.get(a.actor, a.actor), "event": a.event, "details": a.payload_json}
+            for a in rows]
+
+
 # ---------- metrics + graph ----------
 
 SHOWN = {CandidateStatus.pending, CandidateStatus.asked, CandidateStatus.approved, CandidateStatus.rejected,
@@ -327,22 +340,32 @@ def metrics(org_id: str, s: DB, user: CurrentUser) -> dict[str, Any]:
     org = org_for(s, org_id, user)
     scans = list(s.scalars(select(Scan).where(Scan.org_id == org.id).order_by(Scan.started_at)))
     series, found, approved, executed = [], 0.0, 0.0, 0.0
+    n_approved = n_executed = 0
     for scan in scans:
         cands = list(s.scalars(select(CandidateRow).where(CandidateRow.scan_id == scan.id)))
         n_app = sum(c.status in APPROVED for c in cands)
         n_rej = sum(c.status == CandidateStatus.rejected for c in cands)
         shown = sum(c.status in SHOWN for c in cands)
+        learned = s.scalar(select(func.count()).select_from(Verdict).where(
+            Verdict.candidate_id.in_([c.id for c in cands]), Verdict.learning_status == "learned",
+            Verdict.decision == Decision.reject)) if cands else 0
         series.append({"scan_id": scan.id, "started_at": scan.started_at, "approved": n_app, "rejected": n_rej,
                        "shown": shown, "suppressed": sum(c.status == CandidateStatus.suppressed for c in cands),
                        "acceptance_rate": n_app / (n_app + n_rej) if n_app + n_rej else None,
-                       "false_alarm_rate": n_rej / shown if shown else None})
+                       "false_alarm_rate": n_rej / shown if shown else None,
+                       "found": round(sum(c.monthly_saving or 0 for c in cands
+                                          if c.status != CandidateStatus.suppressed), 2),
+                       "rules_learned": learned})
         approved += sum(c.monthly_saving or 0 for c in cands if c.status in APPROVED)
         executed += sum(c.monthly_saving or 0 for c in cands if c.status == CandidateStatus.executed)
+        n_approved += n_app
+        n_executed += sum(c.status == CandidateStatus.executed for c in cands)
     if scans:
         last = s.scalars(select(CandidateRow).where(CandidateRow.scan_id == scans[-1].id))
         found = sum(c.monthly_saving or 0 for c in last if c.status != CandidateStatus.suppressed)
     return {"series": series, "savings": {"found": round(found, 2), "approved": round(approved, 2),
-                                          "executed": round(executed, 2)}}
+                                          "executed": round(executed, 2), "approved_count": n_approved,
+                                          "executed_count": n_executed}}
 
 
 @router.get("/graph/{scan_id}")

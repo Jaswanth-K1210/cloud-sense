@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, money, ORG, post, type Action, type Candidate, type MemoryHit, type ScanDetail, type ScanSummary,
   type Verdict } from "../api";
+import { useShell } from "../components/Shell";
 import { MemoryList, Modal, PageState, PageTitle, StatusTag, useLoad, Voice } from "../components/ui";
 
 const ACTION: Record<string, string> = {
@@ -14,7 +15,8 @@ async function latestScan(): Promise<ScanDetail | null> {
 }
 
 export default function Queue() {
-  const scan = useLoad(latestScan);
+  const shell = useShell();
+  const scan = useLoad(latestScan, [shell.lastScan?.id, shell.lastScan?.status]);
   const [rejecting, setRejecting] = useState<Candidate | null>(null);
   const [why, setWhy] = useState<Candidate | null>(null);
   const [learning, setLearning] = useState<Record<string, Verdict>>({});
@@ -49,20 +51,14 @@ export default function Queue() {
     }
   };
 
-  const runScan = async () => {
-    await post(`/orgs/${ORG}/scans`);
-    scan.reload();
-  };
-
   const d = scan.data;
-  const toReview = d ? [...d.recommended, ...d.asked] : [];
+  const toReview = d ? [...d.recommended, ...d.asked].sort((a, b) => (b.monthly_saving ?? 0) - (a.monthly_saving ?? 0)) : [];
   const approved = d ? d.reviewed.filter((c) => c.status === "approved" || c.status === "executed") : [];
 
   return (
     <>
-      <PageTitle title="Review queue">
-        <button className="btn" onClick={runScan}>Run a new scan</button>
-      </PageTitle>
+      <PageTitle title="Recommendations"
+        subtitle={d ? `${toReview.length} open · ${money(toReview.reduce((n, c) => n + (c.monthly_saving ?? 0), 0))}/mo potential · sorted by saving` : undefined} />
       {Object.values(learning).map((v) => <LearningBanner key={v.id} v={v} />)}
       {flash && <p className="mb-4 rounded-md border border-reject/40 p-3 text-sm text-reject" role="alert">{flash}</p>}
 

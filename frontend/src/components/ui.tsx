@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useState, type ReactNode } from "react";
 import { memoryParts, type MemoryHit } from "../api";
+import { TopBar } from "./Shell";
 
 /** Fetch-on-mount with loading / error / reload. */
 export function useLoad<T>(fn: () => Promise<T>, deps: unknown[] = []) {
@@ -32,13 +33,8 @@ export function PageState({ loading, error, empty, children, onRetry }: {
   return <>{children}</>;
 }
 
-export function PageTitle({ title, children }: { title: string; children?: ReactNode }) {
-  return (
-    <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-      <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>
-      <div className="flex flex-wrap gap-2">{children}</div>
-    </div>
-  );
+export function PageTitle({ title, subtitle, children }: { title: string; subtitle?: ReactNode; children?: ReactNode }) {
+  return <TopBar title={title} subtitle={subtitle}>{children}</TopBar>;
 }
 
 /** An engineer's words, set as a quote. The visual signature of the app. */

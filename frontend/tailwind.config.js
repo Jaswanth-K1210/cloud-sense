@@ -1,18 +1,23 @@
-/** Colors come from CSS variables in src/index.css so light/dark swap in one place. */
-const v = (name) => `rgb(var(--${name}) / <alpha-value>)`;
-
+/** Tokens from the CloudSense Figma file (UI workflow). Light theme only, as designed. */
 export default {
   content: ["./index.html", "./src/**/*.{ts,tsx}"],
   theme: {
     extend: {
       colors: {
-        ink: v("ink"), muted: v("muted"), paper: v("paper"), panel: v("panel"), rule: v("rule"),
-        approve: v("approve"), reject: v("reject"), learned: v("learned"), focus: v("focus"),
+        // surfaces + text
+        paper: "#f4f6f5", panel: "#ffffff", rule: "#e1e7e5", track: "#eef2f1",
+        ink: "#0c1a17", muted: "#5b6b66",
+        // brand / status
+        approve: "#0f766e", "approve-soft": "#8cc7bc", success: "#15803d",
+        reject: "#b91c1c",
+        learned: "#6d28d9", "learned-soft": "#ede9fe", "learned-card": "#fbfaff", "learned-line": "#ddd6fe",
+        warn: "#b45309", "warn-soft": "#fef3c7",
+        focus: "#0f766e",
+        // sidebar
+        side: { bg: "#0b1f1c", raised: "#16332e", avatar: "#2a4b45", text: "#9db5af", soft: "#cfe3de",
+                active: "#5eead4", memory: "#c4b5fd" },
       },
-      fontFamily: {
-        sans: ['"Schibsted Grotesk"', "ui-sans-serif", "system-ui", "sans-serif"],
-        voice: ['"Newsreader"', "Georgia", "serif"],
-      },
+      fontFamily: { sans: ['"Inter"', "ui-sans-serif", "system-ui", "sans-serif"] },
     },
   },
 };
