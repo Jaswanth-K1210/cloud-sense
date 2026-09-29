@@ -114,3 +114,19 @@ async def test_fake_llm_obeys_lookalike_memory() -> None:
     out = await decide_all(org, [c2, c3], [r2, r3], mc, FakeLLM())
     assert out[c2.id].decision == "suppress" and out[c2.id].cited_memory_ids
     assert out[c3.id].decision == "recommend"
+
+
+def test_groq_client_per_event_loop_with_retries() -> None:
+    import asyncio
+
+    from backend.agent.llm import MAX_RETRIES, GroqLLM
+
+    llm = GroqLLM()
+
+    async def grab():
+        return llm.client, llm.client
+
+    a1, a2 = asyncio.run(grab())
+    b1, _ = asyncio.run(grab())
+    assert a1 is a2 and a1 is not b1
+    assert a1.max_retries == MAX_RETRIES
